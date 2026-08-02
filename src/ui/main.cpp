@@ -1,0 +1,313 @@
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <thread>
+#include <string>
+
+#include <windows.h>
+#include <commdlg.h>
+
+#include "core/log.h"
+#include "imgui.h"
+#include "imgui_impl_dx11.h"
+#include "imgui_impl_win32.h"
+#include "player/media_player.h"
+#include "render/d3d11_renderer.h"
+#include "ui/control_panel.h"
+#include "ui/host_window.h"
+#include "ui/playback_controller.h"
+
+namespace {
+
+me::HostWindow g_window;
+me::D3D11Renderer g_renderer;
+me::MediaPlayer g_player;
+me::PlaybackController g_controller(&g_player);
+me::ControlPanel g_panel;
+bool g_show_panel = true;
+std::atomic<bool> g_open_requested{false};
+std::atomic<bool> g_open_prefer_hw{false};
+std::atomic<bool> g_wallpaper_requested{false};
+
+std::string utf8_from_wide(const std::wstring& wide) {
+    if (wide.empty()) return {};
+    const int len = WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string out(len > 0 ? len - 1 : 0, '\0');
+    if (len > 0) {
+        WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, out.data(), len, nullptr, nullptr);
+    }
+    return out;
+}
+
+void open_media(const std::wstring& path, bool prefer_hw) {
+    me::Error err = g_controller.open(utf8_from_wide(path), prefer_hw);
+    if (!err.ok()) {
+        std::fprintf(stderr, "打开失败: %s\n", err.message().c_str());
+    }
+}
+
+// 回归测试入口：--reopen <秒> 在 N 秒后重开同一个文件（复现"播放中拖入新视频"）
+void maybe_schedule_reopen(const std::wstring& path, bool prefer_hw, double after_seconds) {
+    if (after_seconds <= 0.0 || path.empty()) return;
+    std::thread([path, prefer_hw, after_seconds] {
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(static_cast<int>(after_seconds * 1000.0)));
+        std::fprintf(stderr, "[reopen] 触发重开: %ls\n", path.c_str());
+        open_media(path, prefer_hw);
+    }).detach();
+}
+
+void toggle_wallpaper() {
+    if (g_window.wallpaper_mode()) {
+        g_window.exit_wallpaper_mode();
+        std::fprintf(stderr, "[wallpaper] 退出壁纸模式\\n");
+    } else if (g_window.enter_wallpaper_mode()) {
+        std::fprintf(stderr, "[wallpaper] 进入壁纸模式（Ctrl+Alt+W 退出）\\n");
+    } else {
+        std::fprintf(stderr, "[wallpaper] 进入壁纸模式失败（找不到 WorkerW）\\n");
+    }
+}
+
+}  // namespace
+
+int wmain(int argc, wchar_t** argv) {
+    SetConsoleOutputCP(CP_UTF8);  // 让中文日志在控制台正确显示
+    SetConsoleCP(CP_UTF8);
+    me::Log::set_level(me::LogLevel::Info);
+    for (int i = 1; i < argc; ++i) {
+        if (std::wstring(argv[i]) == L"--debug") me::Log::set_level(me::LogLevel::Debug);
+    }
+    std::printf("MediaEngine v0.1\n");
+
+    g_window.set_file_drop_callback([](const std::wstring& path) {
+        open_media(path, g_open_prefer_hw.load());
+    });
+    g_window.set_key_callback([](unsigned vk) {
+        switch (vk) {
+            case VK_SPACE: g_controller.toggle_pause(); break;
+            case VK_LEFT:  g_controller.seek(g_controller.position() - 10.0); break;
+            case VK_RIGHT: g_controller.seek(g_controller.position() + 10.0); break;
+            case 'H':      g_show_panel = !g_show_panel; break;
+            case 'M':      g_controller.set_volume(g_controller.volume() > 0.01f ? 0.0f : 1.0f); break;
+            case VK_OEM_4: g_controller.set_speed(g_controller.speed() / 1.25); break;  // [ 减速
+            case VK_OEM_6: g_controller.set_speed(g_controller.speed() * 1.25); break;  // ] 加速
+            case VK_F12: break;  // 调试导出暂禁用
+            default: break;
+        }
+    });
+    g_window.set_resize_callback([](int w, int h) { g_renderer.set_pending_size(w, h); });
+
+    // 全局热键：Ctrl+Alt+W 切换壁纸模式（进入壁纸后窗口点击穿透，只能用热键退出）
+    RegisterHotKey(nullptr, 1, MOD_CONTROL | MOD_ALT, 'W');
+
+    if (!g_window.create(L"MediaEngine — 学习型媒体引擎", 1280, 720)) {
+        std::fprintf(stderr, "创建窗口失败\n");
+        return 1;
+    }
+
+    me::Error rerr = g_renderer.init(g_window.handle(), 1280, 720);
+    if (!rerr.ok()) {
+        std::fprintf(stderr, "渲染器初始化失败: %s\n", rerr.message().c_str());
+        return 1;
+    }
+    g_player.set_renderer(&g_renderer);
+
+    // ImGui 初始化（此后所有 ImGui 调用都发生在渲染线程）
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = "media_engine_imgui.ini";
+    const ImFontConfig font_cfg{};
+    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc", 18.0f,
+                                 &font_cfg, io.Fonts->GetGlyphRangesChineseFull());
+    ImGui_ImplWin32_Init(g_window.handle());
+    ImGui_ImplDX11_Init(g_renderer.device(), g_renderer.context());
+
+    // 渲染线程每帧调用：画控制面板 + Present
+    g_player.set_present_hook([] {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(static_cast<float>(g_window.mouse_x()),
+                             static_cast<float>(g_window.mouse_y()));
+        io.AddMouseButtonEvent(0, g_window.left_button_down());
+        io.AddMouseWheelEvent(0.0f, static_cast<float>(g_window.take_mouse_wheel()));
+
+        ImGui_ImplDX11_NewFrame();
+        ImGui_ImplWin32_NewFrame();
+        ImGui::NewFrame();
+
+        me::PanelRequest requests;
+        g_panel.draw(g_controller, requests, &g_show_panel);  // 绘制控制面板（必须保留！）
+        g_open_prefer_hw.store(requests.prefer_hw);  // 勾选/取消后立即生效：拖入新文件也用这个值
+        if (requests.wallpaper_toggle) g_wallpaper_requested.store(true);
+        if (requests.open_file) {
+            g_open_requested.store(true);
+
+        }
+
+        ImGui::Render();
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        g_renderer.present_swapchain();
+    });
+
+    // 命令行传入文件则直接打开；--hw 表示优先硬解，--reopen N 用于回归测试
+    bool prefer_hw_cli = false;
+    double reopen_after = -1.0;
+    double seek_after_seconds = -1.0;
+    double eof_seek_target = -1.0;
+    double speed_test = -1.0;
+    bool pause_test = false;
+    bool wallpaper_test = false;
+    int device_test = -1;
+    for (int i = 1; i < argc; ++i) {
+        if (std::wstring(argv[i]) == L"--hw") prefer_hw_cli = true;
+        if (std::wstring(argv[i]) == L"--seek" && i + 1 < argc) {
+            seek_after_seconds = _wtof(argv[i + 1]);
+        }
+        if (std::wstring(argv[i]) == L"--eof-seek" && i + 1 < argc) {
+            eof_seek_target = _wtof(argv[i + 1]);
+        }
+        if (std::wstring(argv[i]) == L"--speed" && i + 1 < argc) {
+            speed_test = _wtof(argv[i + 1]);
+        }
+        if (std::wstring(argv[i]) == L"--wallpaper") {
+            wallpaper_test = true;
+        }
+        if (std::wstring(argv[i]) == L"--pause-test") {
+            pause_test = true;
+        }
+        if (std::wstring(argv[i]) == L"--device" && i + 1 < argc) {
+            device_test = _wtoi(argv[i + 1]);
+        }
+        if (std::wstring(argv[i]) == L"--reopen" && i + 1 < argc) {
+            reopen_after = _wtof(argv[i + 1]);
+        }
+    }
+    std::wstring first_media;
+    for (int i = 1; i < argc; ++i) {
+        const std::wstring arg(argv[i]);
+        if ((arg == L"--seek" || arg == L"--eof-seek" || arg == L"--speed" || arg == L"--device") && i + 1 < argc) {
+            ++i;  // 跳过带值的参数
+            continue;
+        }
+        if (arg == L"--wallpaper") {
+            continue;
+        }
+        if (arg == L"--pause-test") {
+            continue;
+        }
+        if (arg == L"--reopen" && i + 1 < argc) {
+            ++i;  // 跳过 --reopen 的值，避免被当成媒体路径
+            continue;
+        }
+        if (arg == L"--seek" && i + 1 < argc) {
+            ++i;  // 跳过 --seek 的值
+            continue;
+        }
+        if (arg != L"--hw" && arg != L"--debug") {
+            first_media = arg;
+            open_media(arg, prefer_hw_cli);
+            break;
+        }
+    }
+    maybe_schedule_reopen(first_media, prefer_hw_cli, reopen_after);
+    if (seek_after_seconds > 0.0) {
+        std::thread([target = seek_after_seconds] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            std::fprintf(stderr, "[seek-test] 跳转到 %.1fs\\n", target);
+            g_controller.seek(target);
+            std::this_thread::sleep_for(std::chrono::milliseconds(400));
+            std::fprintf(stderr, "[seek-test] 快速拖回 %.1fs\\n", target * 0.6);
+            g_controller.seek(target * 0.6);
+            std::this_thread::sleep_for(std::chrono::milliseconds(400));
+            std::fprintf(stderr, "[seek-test] 再拖到 %.1fs\\n", target * 0.8);
+            g_controller.seek(target * 0.8);
+        }).detach();
+    }
+    if (eof_seek_target >= 0.0) {
+        std::thread([target = eof_seek_target] {
+            // 等播放自然结束（ended）后再 seek，覆盖 EOF→seek 唤醒场景
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            for (int i = 0; i < 250; ++i) {
+                if (g_controller.ended()) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            }
+            std::fprintf(stderr, "[eof-seek] EOF 后跳转到 %.1fs\\n", target);
+            g_controller.seek(target);
+        }).detach();
+    }
+    if (speed_test > 0.0) {
+        std::thread([rate = speed_test] {
+            // 模拟拖动速度条：每 150ms 换一档，覆盖 0.5x-3x 快速来回
+            const double sweep[] = {1.0, 1.5, 2.0, 2.5, 3.0, 2.5, 2.0, 1.5, 1.0, 0.75, 0.5, 0.75, 1.0};
+            std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+            for (double s : sweep) {
+                std::fprintf(stderr, "[speed-test] 变速到 %.2fx\\n", s);
+                g_controller.set_speed(s);
+                std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            }
+            std::fprintf(stderr, "[speed-test] 拖动结束，保持 %.2fx\\n", rate);
+            g_controller.set_speed(rate);
+            std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+        }).detach();
+    }
+    if (wallpaper_test) {
+        std::thread([] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            toggle_wallpaper();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+            toggle_wallpaper();
+        }).detach();
+    }
+    if (pause_test) {
+        std::thread([] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(4000));
+            std::fprintf(stderr, "[pause-test] 暂停\\n");
+            g_controller.pause();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            std::fprintf(stderr, "[pause-test] 恢复\\n");
+            g_controller.play();
+        }).detach();
+    }
+    if (device_test >= 0) {
+        std::thread([idx = device_test] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+            std::fprintf(stderr, "[device-test] 切换设备 #%d\\n", idx);
+            me::Error err = g_controller.set_audio_device(idx);
+            std::fprintf(stderr, "[device-test] 切换结果: %s\\n", err.ok() ? "OK" : err.message().c_str());
+        }).detach();
+    }
+
+    // 主线程：消息循环 + 处理"打开文件"请求（对话框必须在主线程）
+    for (;;) {
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_HOTKEY && msg.wParam == 1) { toggle_wallpaper(); continue; }
+            if (msg.message == WM_QUIT) {
+                g_player.close();
+                ImGui_ImplDX11_Shutdown();
+                ImGui_ImplWin32_Shutdown();
+                ImGui::DestroyContext();
+                g_renderer.shutdown();
+                g_window.destroy();
+                return static_cast<int>(msg.wParam);
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        if (g_wallpaper_requested.exchange(false)) toggle_wallpaper();
+        if (g_open_requested.exchange(false)) {
+            wchar_t file[MAX_PATH] = {};
+            OPENFILENAMEW ofn = {};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = g_window.handle();
+            ofn.lpstrFile = file;
+            ofn.nMaxFile = MAX_PATH;
+            ofn.lpstrFilter = L"媒体文件\0*.mp4;*.mkv;*.mov;*.ts;*.flv;*.webm;*.avi;*.wav;*.mp3;*.flac;*.opus;*.m4a;*.aac;*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp\0所有文件\0*.*\0";
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+            if (GetOpenFileNameW(&ofn)) {
+                open_media(ofn.lpstrFile, g_open_prefer_hw.load());
+            }
+        }
+        Sleep(2);
+    }
+}

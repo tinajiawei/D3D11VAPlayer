@@ -1,0 +1,8 @@
+/build/
+/samples/
+*.user
+*.suo
+/ffmpeg-8.1.2-full_build-shared/
+media_engine_imgui.ini
+*.log
+.vs/
