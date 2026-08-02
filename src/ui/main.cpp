@@ -42,7 +42,10 @@ std::string utf8_from_wide(const std::wstring& wide) {
 void open_media(const std::wstring& path, bool prefer_hw) {
     me::Error err = g_controller.open(utf8_from_wide(path), prefer_hw);
     if (!err.ok()) {
-        std::fprintf(stderr, "打开失败: %s\n", err.message().c_str());
+        std::fprintf(stderr, "打开失败: %s\\n", err.message().c_str());
+        g_panel.set_open_error(err.message());
+    } else {
+        g_panel.set_open_error({});
     }
 }
 

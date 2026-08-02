@@ -16,9 +16,11 @@ class ControlPanel {
 public:
     // 在渲染线程每帧调用
     void draw(PlaybackController& controller, PanelRequest& requests, bool* show_panel);
+    void set_open_error(const std::string& message) { open_error_ = message; }
 
 private:
     bool prefer_hw_ = true;
+    std::string open_error_;  // 最近一次打开失败的原因（面板显示）
 };
 
 }  // namespace me

@@ -46,6 +46,10 @@ void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, 
     ImGui::SameLine();
     if (ImGui::Button("壁纸模式")) requests.wallpaper_toggle = true;
 
+    if (!open_error_.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "打开失败: %s", open_error_.c_str());
+    }
+
     const bool has_media = controller.has_video() || controller.has_audio();
     if (has_media) {
         ImGui::Separator();
