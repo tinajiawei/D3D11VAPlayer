@@ -7,15 +7,18 @@
 #include "core/clock.h"
 #include "core/log.h"
 #include "audio/null_audio_sink.h"
-#include "sync/sync_engine.h"
 
 namespace me {
 
 // 默认用 NullAudioSink 桩：引擎自包含可运行（无声但同步时钟可用）；
 // 真实后端（WASAPI）由 C API 通过 set_audio_sink 注入（plugin\2\audio.dll）
-MediaPlayer::MediaPlayer() : sync_(std::make_unique<SyncEngine>()), audio_(std::make_unique<NullAudioSink>()) {}
+MediaPlayer::MediaPlayer() : audio_(std::make_unique<NullAudioSink>()) {}
 void MediaPlayer::set_audio_sink(std::unique_ptr<IAudioSink> sink) {
     if (sink) audio_ = std::move(sink);
+}
+
+void MediaPlayer::set_sync_engine(std::unique_ptr<ISyncEngine> engine) {
+    if (engine) sync_ = std::move(engine);
 }
 
 
@@ -28,6 +31,7 @@ constexpr double kSpeedMax = 4.0;
 MediaPlayer::~MediaPlayer() { close(); }
 
 Error MediaPlayer::open(const std::string& path, bool prefer_hw) {
+    if (!sync_) return Error::make(Err::MediaOpenFailed, "同步引擎不可用（sync 插件未注入）");
     close();
 
     // close() 会让包/帧队列进入永久终止态；重开新会话前必须复位，
@@ -175,7 +179,7 @@ void MediaPlayer::close() {
         stop_threads();
         resampler_.close();
         audio_->shutdown();
-        sync_->detach_audio();
+        if (sync_) sync_->detach_audio();
         source_.close();
         video_decoder_.reset();
         audio_decoder_.reset();
@@ -185,12 +189,12 @@ void MediaPlayer::close() {
 }
 
 void MediaPlayer::pause() {
-    sync_->set_paused(true);
+    if (sync_) sync_->set_paused(true);
     if (has_audio_.load()) audio_->pause_stream();
 }
 
 void MediaPlayer::play() {
-    sync_->set_paused(false);
+    if (sync_) sync_->set_paused(false);
     if (has_audio_.load()) audio_->resume_stream();
 }
 
@@ -206,8 +210,10 @@ void MediaPlayer::seek(double seconds) {
     const uint64_t new_gen = seek_gen_.load() + 1;
     // 顺序很重要：先用新代数冻结主时钟，再 flush 队列/解码器、重置设备缓冲、
     // 最后让解封装跳转并发布新代数——任何旧 seek 的帧都无法锚定新 seek
-    if (has_audio_.load() && audio_enabled_) sync_->freeze_until_audio(seconds, new_gen);
-    sync_->seek(seconds);
+    if (sync_) {
+        if (has_audio_.load() && audio_enabled_) sync_->freeze_until_audio(seconds, new_gen);
+        sync_->seek(seconds);
+    }
     video_flush_requested_.store(true);
     audio_flush_requested_.store(true);
     video_packets_.flush();
@@ -229,7 +235,7 @@ void MediaPlayer::seek(double seconds) {
 void MediaPlayer::set_speed(double speed) {
     speed = std::clamp(speed, kSpeedMin, kSpeedMax);
     speed_.store(speed);
-    sync_->set_speed(speed);
+    if (sync_) sync_->set_speed(speed);
     // 拖动速度时事件非常密集：每次重开重采样器都会清空环形缓冲，声音被反复切断。
     // 这里做 80ms 去抖：拖动期间只更新主时钟，稳定后重开一次。
     static double last_reopen_qpc = 0.0;
@@ -240,7 +246,7 @@ void MediaPlayer::set_speed(double speed) {
         // 冻结主时钟直到新倍率的第一帧音频写入：
         // 避免重开窗口期音频内容落后（旧速率残音 + 静音）导致听起来"变慢"
         if (has_audio_.load() && audio_enabled_) {
-            sync_->freeze_until_audio(sync_->position(), seek_gen_.load());
+            if (sync_) sync_->freeze_until_audio(sync_->position(), seek_gen_.load());
         }
     }
 }
@@ -252,7 +258,7 @@ void MediaPlayer::set_volume(float volume) {
 
 double MediaPlayer::position() const {
     if (!opened_.load()) return 0.0;
-    return sync_->position();
+    return sync_ ? sync_->position() : 0.0;
 }
 
 Error MediaPlayer::set_audio_device(int index) {
@@ -271,8 +277,10 @@ Error MediaPlayer::set_audio_device(int index) {
             return err;
         }
     }
-    sync_->seek(pos);  // 切换后重新对齐主时钟
-    if (has_audio_.load() && audio_enabled_) sync_->freeze_until_audio(pos, seek_gen_.load());
+    if (sync_) {
+        sync_->seek(pos);  // 切换后重新对齐主时钟
+        if (has_audio_.load() && audio_enabled_) sync_->freeze_until_audio(pos, seek_gen_.load());
+    }
     audio_resampler_reopen_.store(true);  // 新设备采样率可能不同，强制重开重采样器
     audio_->clear_ring();
     return Error::success();

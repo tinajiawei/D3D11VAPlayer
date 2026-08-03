@@ -9,6 +9,7 @@
 #include "player/media_player.h"
 #include "api/renderer_plugin.h"
 #include "api/audio_plugin.h"
+#include "api/sync_plugin.h"
 #include "render/headless_renderer.h"
 #include "audio/null_audio_sink.h"
 #include "core/clock.h"
@@ -100,6 +101,46 @@ void* audio_plugin_create(int type, char* errbuf, int errbuf_size) {
     if (!api.module || !api.create) return nullptr;
     return api.create(type, errbuf, errbuf_size);
 }
+
+using SyncCreateFn = void* (*)(int, char*, int);
+using SyncDestroyFn = void (*)(void*);
+
+struct SyncPluginApi {
+    HMODULE module = nullptr;
+    SyncCreateFn create = nullptr;
+    SyncDestroyFn destroy = nullptr;
+};
+
+SyncPluginApi& sync_plugin_api() {
+    static SyncPluginApi api = [] {
+        SyncPluginApi a;
+        wchar_t path[MAX_PATH] = {};
+        if (GetModuleFileNameW(nullptr, path, MAX_PATH)) {
+            wchar_t* slash = wcsrchr(path, static_cast<wchar_t>(92));
+            if (slash) *slash = 0;
+            wcscat_s(path, L"\\plugin\\2\\sync.dll");
+            a.module = LoadLibraryW(path);
+            if (a.module) {
+                a.create = reinterpret_cast<SyncCreateFn>(
+                    GetProcAddress(a.module, "me_sync_create"));
+                a.destroy = reinterpret_cast<SyncDestroyFn>(
+                    GetProcAddress(a.module, "me_sync_destroy"));
+                if (!a.create || !a.destroy) {
+                    FreeLibrary(a.module);
+                    a.module = nullptr;
+                }
+            }
+        }
+        return a;
+    }();
+    return api;
+}
+
+void* sync_plugin_create(int type, char* errbuf, int errbuf_size) {
+    SyncPluginApi& api = sync_plugin_api();
+    if (!api.module || !api.create) return nullptr;
+    return api.create(type, errbuf, errbuf_size);
+}
 }  // namespace
 
 // ME_Player 是 C API 的全局不透明类型：内部持有引擎对象
@@ -158,6 +199,21 @@ ME_API ME_Player* me_create_player_ex(void* hwnd, int width, int height, int fla
                 : "音频插件加载失败（已回退无声）: plugin\\2\\audio.dll";
             p->last_error = msg;
             ME_LOG_WARN(msg);
+        }
+    }
+    {
+        char errbuf[256] = {};
+        void* s = sync_plugin_create(ME_SYNC_TYPE_MASTERCLOCK, errbuf,
+                                    static_cast<int>(sizeof(errbuf)));
+        if (s) {
+            p->player.set_sync_engine(
+                std::unique_ptr<me::ISyncEngine>(static_cast<me::ISyncEngine*>(s)));
+        } else {
+            // 同步是硬依赖：缺失时引擎不可用（open 会失败）
+            p->last_error = errbuf[0]
+                ? ("同步引擎插件创建失败: " + std::string(errbuf))
+                : "同步引擎插件加载失败: plugin\\2\\sync.dll";
+            ME_LOG_ERROR(p->last_error);
         }
     }
     p->player.set_renderer(p->renderer.get());

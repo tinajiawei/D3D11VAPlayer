@@ -18,7 +18,7 @@
 - 接口桩与无头回归：HeadlessRenderer / NullAudioSink，`--headless` 无窗口跑通整条解码→渲染→Present 管线
 - 壁纸浮层控制面板：壁纸模式下独立置顶面板（工作区右上角），不再沉在桌面图标下面
 - 壁纸增强：面板位置记忆（media_engine_panel.ini）+ 系统托盘图标（显示/隐藏面板、切换壁纸、退出）
-- 模块 DLL 化（M3）：D3D11 渲染器 plugin\2\renderer.dll + WASAPI 音频 plugin\2\audio.dll；引擎按 ABI 工厂加载，缺渲染器明确报错，缺音频回退无声（NullAudioSink）
+- 模块 DLL 化（M3 完成）：渲染 plugin\2\renderer.dll + 音频 plugin\2\audio.dll + 同步 plugin\2\sync.dll；引擎按 ABI 工厂加载，渲染/同步为硬依赖（缺失明确报错），音频缺插件回退无声（NullAudioSink）
 
 ## 目录结构
 

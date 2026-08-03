@@ -82,6 +82,19 @@ target_link_libraries(audio_plugin PRIVATE mmdevapi ole32 uuid)
 set_target_properties(audio_plugin PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:media_player_app>/plugin/2"
     OUTPUT_NAME "audio")
+
+# ---- 同步引擎插件 DLL（plugin\2\，音画同步从引擎拆出；docs/11 M3）----
+add_library(sync_plugin SHARED
+    plugins/sync_plugin.cpp
+    sync/sync_engine.cpp
+    core/clock.cpp
+    core/log.cpp
+)
+target_compile_definitions(sync_plugin PRIVATE ME_SYNC_PLUGIN_BUILD)
+target_include_directories(sync_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(sync_plugin PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:media_player_app>/plugin/2"
+    OUTPUT_NAME "sync")
 target_include_directories(media_engine_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_directories(media_engine_core PUBLIC ${FFMPEG_ROOT}/lib)
 target_include_directories(media_engine_core PUBLIC ${FFMPEG_ROOT}/include)
@@ -89,7 +102,6 @@ target_link_libraries(media_engine_core PUBLIC avcodec avformat avutil swresampl
 
 # ---- 完整引擎：core + media + sync + audio + render + player ----
 add_library(media_engine SHARED
-    sync/sync_engine.cpp
     audio/audio_resampler.cpp
     player/media_player.cpp
     api/me_api.cpp

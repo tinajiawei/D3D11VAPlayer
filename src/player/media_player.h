@@ -36,6 +36,8 @@ public:
     void set_renderer(IRenderer* renderer) { renderer_ = renderer; }
     void set_present_hook(std::function<void()> hook) { present_hook_ = std::move(hook); }
     void set_audio_sink(std::unique_ptr<IAudioSink> sink);
+    // 同步引擎由 C API 注入（plugin\2\sync.dll）；未注入时 open 失败
+    void set_sync_engine(std::unique_ptr<ISyncEngine> engine);
 
     Error open(const std::string& path, bool prefer_hw = false);
     void close();
@@ -48,8 +50,8 @@ public:
 
     // 查询（供 UI）
     double position() const;
-    double duration() const { return sync_->duration(); }
-    bool is_paused() const { return sync_->is_paused(); }
+    double duration() const { return sync_ ? sync_->duration() : 0.0; }
+    bool is_paused() const { return sync_ ? sync_->is_paused() : false; }
     bool has_video() const { return has_video_.load(); }
     bool has_audio() const { return has_audio_.load(); }
     bool is_open() const { return opened_.load(); }
