@@ -1,44 +1,43 @@
 #pragma once
 
 #include <mutex>
-#include <cstdint>
+#include "api/isync_engine.h"
 
 #include "core/clock.h"
 
 namespace me {
 
-class AudioOutput;
 
 // 音画同步引擎（见 docs/03）：
 //  - 主时钟：优先用音频硬件时钟（IAudioClock 已播位置 + seek 偏移），无音频时回退单调时钟；
 //  - 视频调度：算出"这一帧还要等多久上屏"，落后过多由上层丢帧；
 //  - 变速：统一缩放播放时钟；音频侧由解码线程重开重采样器配合（dst 采样率 = 设备采样率 * 倍率）。
-class SyncEngine {
+class SyncEngine : public ISyncEngine {
 public:
-    void attach_audio(AudioOutput* audio) { audio_ = audio; }
-    void detach_audio() { audio_ = nullptr; }
+    void attach_audio(IAudioSink* audio) override { audio_ = audio; }
+    void detach_audio() override { audio_ = nullptr; }
 
-    double master_clock() const;
-    double position() const { return master_clock(); }
+    double master_clock() const override;
+    double position() const override { return master_clock(); }
 
-    void set_duration(double d) { duration_ = d; }
-    double duration() const { return duration_; }
+    void set_duration(double d) override { duration_ = d; }
+    double duration() const override { return duration_; }
 
     // 计算这一帧应该再等多久上屏（秒）；返回 0 表示立刻上屏。
-    double video_delay(double frame_pts, double last_pts, double last_delay, double frame_duration);
+    double video_delay(double frame_pts, double last_pts, double last_delay, double frame_duration) override;
 
-    void set_speed(double rate);   // 限幅 0.25 ~ 4.0
-    double get_speed() const;
-    void set_paused(bool paused);
-    bool is_paused() const;
-    void seek(double target_seconds);
-    void freeze_until_audio(double pos, uint64_t gen);  // seek 后冻结主时钟，等第一帧新音频起播
-    bool audio_resume(double first_pts, uint64_t gen);  // 只有代数匹配的第一帧才能锚定，返回是否真正锚定
-    void align_to_video(double video_pts);  // 首帧对齐：吸收启动期音视频时钟差
-    void reset();
+    void set_speed(double rate) override;
+    double get_speed() const override;
+    void set_paused(bool paused) override;
+    bool is_paused() const override;
+    void seek(double target_seconds) override;
+    void freeze_until_audio(double pos, uint64_t gen) override;
+    bool audio_resume(double first_pts, uint64_t gen) override;
+    void align_to_video(double video_pts) override;
+    void reset() override;
 
 private:
-    AudioOutput* audio_ = nullptr;
+    IAudioSink* audio_ = nullptr;
     PlaybackClock clock_;
     mutable std::mutex audio_lock_;
     double audio_offset_ = 0.0;  // seek 后主时钟的偏差补偿

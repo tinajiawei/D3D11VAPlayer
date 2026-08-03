@@ -15,8 +15,8 @@
 #include "media/frame_queue.h"
 #include "media/media_source.h"
 #include "media/packet_queue.h"
-#include "render/d3d11_renderer.h"
-#include "sync/sync_engine.h"
+#include "api/irenderer.h"
+#include "api/isync_engine.h"
 
 namespace me {
 
@@ -26,14 +26,14 @@ namespace me {
 // UI 层只通过 PlaybackController 访问本类。
 class MediaPlayer {
 public:
-    MediaPlayer() = default;
+    MediaPlayer();
     ~MediaPlayer();
 
     MediaPlayer(const MediaPlayer&) = delete;
     MediaPlayer& operator=(const MediaPlayer&) = delete;
 
     // 渲染器由宿主窗口创建后注入；present_hook 在渲染线程每帧调用（用于叠加 ImGui）。
-    void set_renderer(D3D11Renderer* renderer) { renderer_ = renderer; }
+    void set_renderer(IRenderer* renderer) { renderer_ = renderer; }
     void set_present_hook(std::function<void()> hook) { present_hook_ = std::move(hook); }
 
     Error open(const std::string& path, bool prefer_hw = false);
@@ -47,8 +47,8 @@ public:
 
     // 查询（供 UI）
     double position() const;
-    double duration() const { return sync_.duration(); }
-    bool is_paused() const { return sync_.is_paused(); }
+    double duration() const { return sync_->duration(); }
+    bool is_paused() const { return sync_->is_paused(); }
     bool has_video() const { return has_video_.load(); }
     bool has_audio() const { return has_audio_.load(); }
     bool is_open() const { return opened_.load(); }
@@ -73,10 +73,10 @@ private:
     PacketQueue video_packets_{1024, 32 * 1024 * 1024};
     PacketQueue audio_packets_{1024, 16 * 1024 * 1024};
     FrameQueue video_frames_{8};
-    SyncEngine sync_;
+    std::unique_ptr<ISyncEngine> sync_;
     AudioOutput audio_;
     AudioResampler resampler_;
-    D3D11Renderer* renderer_ = nullptr;
+    IRenderer* renderer_ = nullptr;
     std::function<void()> present_hook_;
 
     std::unique_ptr<IDecoder> video_decoder_;

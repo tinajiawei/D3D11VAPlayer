@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include "audio/audio_output.h"
+#include "api/iaudio_sink.h"
 #include "core/log.h"
 
 namespace me {

@@ -6,8 +6,11 @@
 
 #include "core/clock.h"
 #include "core/log.h"
+#include "sync/sync_engine.h"
 
 namespace me {
+
+MediaPlayer::MediaPlayer() : sync_(std::make_unique<SyncEngine>()) {}
 
 namespace {
 constexpr double kDropThresholdSeconds = -0.04;  // 视频落后音频超过 40ms 就丢帧
@@ -104,9 +107,9 @@ Error MediaPlayer::open(const std::string& path, bool prefer_hw) {
                                        : (audio_decoder_ ? audio_decoder_->name() : "-");
     }
 
-    sync_.reset();
-    sync_.set_duration(source_.duration_seconds());
-    sync_.set_speed(speed_.load());
+    sync_->reset();
+    sync_->set_duration(source_.duration_seconds());
+    sync_->set_speed(speed_.load());
 
     // 音频输出：失败不致命（视频照常播，只是没声音）
     audio_enabled_ = false;
@@ -118,7 +121,7 @@ Error MediaPlayer::open(const std::string& path, bool prefer_hw) {
             audio_.set_volume(volume_.load());
             Error serr = audio_.start();
             if (serr.ok()) {
-                sync_.attach_audio(&audio_);
+                sync_->attach_audio(&audio_);
                 const AVCodecParameters* ap = source_.audio_stream()->codecpar;
                 active_resample_rate_ = audio_.sample_rate() / speed_.load();
                 resampler_.open(ap->ch_layout, static_cast<AVSampleFormat>(ap->format),
@@ -165,7 +168,7 @@ void MediaPlayer::close() {
         stop_threads();
         resampler_.close();
         audio_.shutdown();
-        sync_.detach_audio();
+        sync_->detach_audio();
         source_.close();
         video_decoder_.reset();
         audio_decoder_.reset();
@@ -175,12 +178,12 @@ void MediaPlayer::close() {
 }
 
 void MediaPlayer::pause() {
-    sync_.set_paused(true);
+    sync_->set_paused(true);
     if (has_audio_.load()) audio_.pause_stream();
 }
 
 void MediaPlayer::play() {
-    sync_.set_paused(false);
+    sync_->set_paused(false);
     if (has_audio_.load()) audio_.resume_stream();
 }
 
@@ -196,8 +199,8 @@ void MediaPlayer::seek(double seconds) {
     const uint64_t new_gen = seek_gen_.load() + 1;
     // 顺序很重要：先用新代数冻结主时钟，再 flush 队列/解码器、重置设备缓冲、
     // 最后让解封装跳转并发布新代数——任何旧 seek 的帧都无法锚定新 seek
-    if (has_audio_.load() && audio_enabled_) sync_.freeze_until_audio(seconds, new_gen);
-    sync_.seek(seconds);
+    if (has_audio_.load() && audio_enabled_) sync_->freeze_until_audio(seconds, new_gen);
+    sync_->seek(seconds);
     video_flush_requested_.store(true);
     audio_flush_requested_.store(true);
     video_packets_.flush();
@@ -219,7 +222,7 @@ void MediaPlayer::seek(double seconds) {
 void MediaPlayer::set_speed(double speed) {
     speed = std::clamp(speed, kSpeedMin, kSpeedMax);
     speed_.store(speed);
-    sync_.set_speed(speed);
+    sync_->set_speed(speed);
     // 拖动速度时事件非常密集：每次重开重采样器都会清空环形缓冲，声音被反复切断。
     // 这里做 80ms 去抖：拖动期间只更新主时钟，稳定后重开一次。
     static double last_reopen_qpc = 0.0;
@@ -230,7 +233,7 @@ void MediaPlayer::set_speed(double speed) {
         // 冻结主时钟直到新倍率的第一帧音频写入：
         // 避免重开窗口期音频内容落后（旧速率残音 + 静音）导致听起来"变慢"
         if (has_audio_.load() && audio_enabled_) {
-            sync_.freeze_until_audio(sync_.position(), seek_gen_.load());
+            sync_->freeze_until_audio(sync_->position(), seek_gen_.load());
         }
     }
 }
@@ -242,7 +245,7 @@ void MediaPlayer::set_volume(float volume) {
 
 double MediaPlayer::position() const {
     if (!opened_.load()) return 0.0;
-    return sync_.position();
+    return sync_->position();
 }
 
 Error MediaPlayer::set_audio_device(int index) {
@@ -261,8 +264,8 @@ Error MediaPlayer::set_audio_device(int index) {
             return err;
         }
     }
-    sync_.seek(pos);  // 切换后重新对齐主时钟
-    if (has_audio_.load() && audio_enabled_) sync_.freeze_until_audio(pos, seek_gen_.load());
+    sync_->seek(pos);  // 切换后重新对齐主时钟
+    if (has_audio_.load() && audio_enabled_) sync_->freeze_until_audio(pos, seek_gen_.load());
     audio_resampler_reopen_.store(true);  // 新设备采样率可能不同，强制重开重采样器
     audio_.clear_ring();
     return Error::success();
@@ -383,7 +386,7 @@ void MediaPlayer::audio_decode_loop() {
         if (eof) {
             // EOF 后挂起等待 seek（不退出线程，seek 后继续解码新位置）
             audio_done_.store(true);  // EOF：让渲染端能判定播放结束
-            sync_.audio_resume(sync_.position(), seek_gen_.load());  // 若 seek 后音频立即 EOF，解除冻结
+            sync_->audio_resume(sync_->position(), seek_gen_.load());  // 若 seek 后音频立即 EOF，解除冻结
             std::unique_lock<std::mutex> lock(media_cv_mutex_);
             media_cv_.wait(lock, [&] { return !running_.load() || seek_gen_.load() != last_ad_gen; });
             if (!running_.load()) break;
@@ -480,14 +483,14 @@ void MediaPlayer::audio_decode_loop() {
                     if (resume_pending) {
                         const double apts = frame->pts != AV_NOPTS_VALUE
                             ? static_cast<double>(frame->pts) * av_q2d(source_.audio_stream()->time_base)
-                            : sync_.position();
+                            : sync_->position();
                         // 精确跳转：seek 后丢弃目标点之前的音频帧，
                         // 否则锚定会落在前一关键帧，把主时钟拉回去重播一段（加速时尤其明显）
                         if (discard_until_target_.load() &&
                             apts < seek_target_.load() - 0.05) {
                             continue;
                         }
-                        if (sync_.audio_resume(apts, seek_gen_.load())) {
+                        if (sync_->audio_resume(apts, seek_gen_.load())) {
                             resume_pending = false;
                             discard_until_target_.store(false);
                         }
@@ -551,7 +554,7 @@ void MediaPlayer::render_loop() {
         }
 
         // 暂停：保持当前画面，仅刷新叠加 UI
-        if (sync_.is_paused()) {
+        if (sync_->is_paused()) {
             // seek 后旧帧已清空：暂停中也取一帧预览，避免黑屏
             if (!last_frame_) {
                 AvFramePtr preview = video_frames_.pop_front();
@@ -587,10 +590,10 @@ void MediaPlayer::render_loop() {
 
         // 落后音频太多：丢帧追上（docs/03 第 3 节）
         if (!have_last_pts && !did_first_align_) {  // 首帧对齐只在首次播放执行（避免 seek 旧帧错位主时钟）
-            sync_.align_to_video(pts);
+            sync_->align_to_video(pts);
             did_first_align_ = true;
         }
-        const double diff = pts - sync_.master_clock();
+        const double diff = pts - sync_->master_clock();
         if (diff < kDropThresholdSeconds) {
             ME_LOG_DEBUG("[loop] DROP pts=", pts, " diff=", diff);
             dropped_frames_.fetch_add(1);
@@ -599,13 +602,13 @@ void MediaPlayer::render_loop() {
             continue;
         }
 
-        const double delay = sync_.video_delay(pts, have_last_pts ? last_pts : pts,
+        const double delay = sync_->video_delay(pts, have_last_pts ? last_pts : pts,
                                                last_delay, video_frame_duration_);
 
         // 分片睡眠等待，保证能及时响应暂停/退出
         if (delay > 0.0) {
             double remain = delay;
-            while (remain > 0.0 && running_.load() && !sync_.is_paused()) {
+            while (remain > 0.0 && running_.load() && !sync_->is_paused()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 remain -= 0.005;
             }

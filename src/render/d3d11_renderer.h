@@ -8,26 +8,26 @@
 #include <wrl/client.h>
 
 #include "core/av_utils.h"
-#include "core/error.h"
+#include "api/irenderer.h"
 
 namespace me {
 
 // D3D11 渲染器：flip-model 交换链 + YUV→RGB 像素着色器。
 // 渲染线程是唯一的 D3D11 使用者（draw_frame 与 present_swapchain 分离，
 // 让上层可以插入 ImGui 等叠加绘制后再 Present）。
-class D3D11Renderer {
+class D3D11Renderer : public IRenderer {
 public:
-    Error init(HWND hwnd, int width, int height);
-    void shutdown();
+    Error init(HWND hwnd, int width, int height) override;
+    void shutdown() override;
 
     // 主线程请求缩放（WM_SIZE），渲染线程在下一帧应用
-    void set_pending_size(int width, int height);
+    void set_pending_size(int width, int height) override;
 
     // 把一帧画进后台缓冲（不 Present）
-    Error draw_frame(const AVFrame* frame);
+    Error draw_frame(const AVFrame* frame) override;
 
     // 提交后台缓冲到屏幕（vsync）
-    Error present_swapchain();
+    Error present_swapchain() override;
 
     void clear_black();
     // 调试：把当前后台缓冲读回并写成 BMP（F12 触发，验证画面用）
@@ -36,13 +36,13 @@ public:
     void request_dump() { dump_requested_.store(true); }
 
     // 视频旋转（0/90/180/270）：手机竖拍文件需要旋转画面显示
-    void set_frame_rotation(int rotation) { frame_rotation_ = rotation; }
+    void set_frame_rotation(int rotation) override { frame_rotation_ = rotation; }
 
-    bool is_ready() const { return device_ != nullptr; }
-    ID3D11Device* device() const { return device_.Get(); }
-    ID3D11DeviceContext* context() const { return context_.Get(); }
-    int width() const { return width_; }
-    int height() const { return height_; }
+    bool is_ready() const override { return device_ != nullptr; }
+    void* device() const override { return device_.Get(); }
+    void* context() const override { return context_.Get(); }
+    int width() const override { return width_; }
+    int height() const override { return height_; }
 
 private:
     template <typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
