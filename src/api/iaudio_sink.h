@@ -13,7 +13,7 @@ class IAudioSink {
 public:
     virtual ~IAudioSink() = default;
 
-    virtual Error init(int sample_rate, int channels, double buffer_seconds) = 0;
+    virtual Error init(int sample_rate, int channels, double buffer_seconds = 0.2) = 0;
     virtual Error start() = 0;
     virtual void stop() = 0;
     virtual void shutdown() = 0;

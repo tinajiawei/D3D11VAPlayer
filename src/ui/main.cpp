@@ -11,6 +11,7 @@
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
 #include "ui/control_panel.h"
+#include "ui/floating_panel.h"
 #include "ui/host_window.h"
 #include "ui/playback_controller.h"
 
@@ -18,11 +19,14 @@ namespace {
 
 me::HostWindow g_window;
 me::ControlPanel g_panel;
+me::FloatingPanel g_floating_panel;
 me::PlaybackController g_controller(nullptr);
 bool g_show_panel = true;
 std::atomic<bool> g_open_requested{false};
 std::atomic<bool> g_open_prefer_hw{false};
 std::atomic<bool> g_wallpaper_requested{false};
+bool g_headless_cli = false;   // --headless 无头模式（HeadlessRenderer + NullAudioSink）
+double g_run_seconds = 8.0;    // --run-seconds 无头运行结束时间
 ME_Player* g_engine = nullptr;  // media_engine.dll 引擎实例
 
 std::string utf8_from_wide(const std::wstring& wide) {
@@ -58,9 +62,15 @@ void maybe_schedule_reopen(const std::wstring& path, bool prefer_hw, double afte
 
 void toggle_wallpaper() {
     if (g_window.wallpaper_mode()) {
+        g_floating_panel.request_destroy();
         g_window.exit_wallpaper_mode();
         std::fprintf(stderr, "[wallpaper] 退出壁纸模式\n");
     } else if (g_window.enter_wallpaper_mode()) {
+        if (g_engine) {
+            auto* dev = static_cast<ID3D11Device*>(me_get_d3d11_device(g_engine));
+            auto* ctx = static_cast<ID3D11DeviceContext*>(me_get_d3d11_context(g_engine));
+            g_floating_panel.request_create(GetModuleHandleW(nullptr), dev, ctx);
+        }
         std::fprintf(stderr, "[wallpaper] 进入壁纸模式（Ctrl+Alt+W 退出）\n");
     } else {
         std::fprintf(stderr, "[wallpaper] 进入壁纸模式失败（找不到 WorkerW）\n");
@@ -80,7 +90,11 @@ void present_callback(void*) {
     ImGui::NewFrame();
 
     me::PanelRequest requests;
-    g_panel.draw(g_controller, requests, &g_show_panel);
+    if (g_floating_panel.active()) {
+        g_floating_panel.render(g_panel, g_controller, requests, &g_show_panel);
+    } else {
+        g_panel.draw(g_controller, requests, &g_show_panel);
+    }
     g_open_prefer_hw.store(requests.prefer_hw);  // 勾选/取消后立即生效：拖入新文件也用这个值
     if (requests.wallpaper_toggle) g_wallpaper_requested.store(true);
     if (requests.open_file) {
@@ -99,6 +113,9 @@ int wmain(int argc, wchar_t** argv) {
     me_set_log_level(1);  // Info
     for (int i = 1; i < argc; ++i) {
         if (std::wstring(argv[i]) == L"--debug") me_set_log_level(0);  // Debug
+    }
+    for (int i = 1; i < argc; ++i) {
+        if (std::wstring(argv[i]) == L"--headless") g_headless_cli = true;
     }
     std::printf("MediaEngine v0.1\n");
 
@@ -120,13 +137,16 @@ int wmain(int argc, wchar_t** argv) {
     });
     g_window.set_resize_callback([](int w, int h) { me_resize(g_engine, w, h); });
 
-    if (!g_window.create(L"MediaEngine — 学习型媒体引擎", 1280, 720)) {
+    if (!g_headless_cli && !g_window.create(L"MediaEngine — 学习型媒体引擎", 1280, 720)) {
         std::fprintf(stderr, "创建窗口失败\n");
         return 1;
     }
 
     // 引擎（media_engine.dll）持有渲染器与播放器
-    g_engine = me_create_player(g_window.handle(), 1280, 720);
+    g_engine = g_headless_cli
+                  ? me_create_player_ex(nullptr, 1280, 720,
+                                        ME_PLAYER_FLAG_HEADLESS | ME_PLAYER_FLAG_NULL_AUDIO)
+                  : me_create_player(g_window.handle(), 1280, 720);
     g_controller.set_player(g_engine);
     if (g_engine) {
         const char* err = me_last_error(g_engine);
@@ -134,6 +154,7 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     // ImGui 初始化（此后所有 ImGui 调用都发生在渲染线程）
+    if (!g_headless_cli) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -150,6 +171,7 @@ int wmain(int argc, wchar_t** argv) {
 
     // 全局热键：Ctrl+Alt+W 切换壁纸模式（进入壁纸后窗口点击穿透，只能用热键退出）
     RegisterHotKey(nullptr, 1, MOD_CONTROL | MOD_ALT, 'W');
+    }
 
     // 命令行参数
     bool prefer_hw_cli = false;
@@ -180,6 +202,9 @@ int wmain(int argc, wchar_t** argv) {
         if (std::wstring(argv[i]) == L"--device" && i + 1 < argc) {
             device_test = _wtoi(argv[i + 1]);
         }
+        if (std::wstring(argv[i]) == L"--run-seconds" && i + 1 < argc) {
+            g_run_seconds = _wtof(argv[i + 1]);
+        }
         if (std::wstring(argv[i]) == L"--wallpaper") {
             wallpaper_test = true;
         }
@@ -187,11 +212,11 @@ int wmain(int argc, wchar_t** argv) {
     std::wstring first_media;
     for (int i = 1; i < argc; ++i) {
         const std::wstring arg(argv[i]);
-        if ((arg == L"--seek" || arg == L"--eof-seek" || arg == L"--speed" || arg == L"--device") && i + 1 < argc) {
+        if ((arg == L"--seek" || arg == L"--eof-seek" || arg == L"--speed" || arg == L"--device" || arg == L"--run-seconds") && i + 1 < argc) {
             ++i;  // 跳过带值的参数
             continue;
         }
-        if (arg == L"--pause-test" || arg == L"--wallpaper") {
+        if (arg == L"--pause-test" || arg == L"--wallpaper" || arg == L"--headless") {
             continue;
         }
         if (arg == L"--reopen" && i + 1 < argc) {
@@ -264,7 +289,7 @@ int wmain(int argc, wchar_t** argv) {
             std::fprintf(stderr, "[device-test] 切换结果: %s\n", err.ok() ? "OK" : err.message().c_str());
         }).detach();
     }
-    if (wallpaper_test) {
+    if (wallpaper_test && !g_headless_cli) {
         std::thread([] {
             std::this_thread::sleep_for(std::chrono::milliseconds(2000));
             toggle_wallpaper();
@@ -274,15 +299,27 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     // 主线程：消息循环 + 处理"打开文件"请求（对话框必须在主线程）
+    if (g_headless_cli) {
+        std::fprintf(stderr, "[headless] 管线运行 %.1fs 后退出\n", g_run_seconds);
+        Sleep(static_cast<DWORD>(g_run_seconds * 1000.0));
+        std::fprintf(stderr, "[headless] draw=%lld present=%lld\n",
+                     me_headless_draw_count(g_engine), me_headless_present_count(g_engine));
+        me_destroy_player(g_engine);
+        g_engine = nullptr;
+        return 0;
+    }
+
     for (;;) {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_HOTKEY && msg.wParam == 1) { toggle_wallpaper(); continue; }
             if (msg.message == WM_QUIT) {
+                g_floating_panel.request_destroy();
+                me_destroy_player(g_engine);  // 先停渲染线程
+                g_floating_panel.destroy_now();
                 ImGui_ImplDX11_Shutdown();
                 ImGui_ImplWin32_Shutdown();
                 ImGui::DestroyContext();
-                me_destroy_player(g_engine);
                 g_engine = nullptr;
                 g_window.destroy();
                 return static_cast<int>(msg.wParam);

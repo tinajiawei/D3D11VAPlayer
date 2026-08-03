@@ -30,12 +30,16 @@ void test_ring_buffer();
 void test_clock();
 void test_queues();
 void test_frame_queue();
+void test_headless_renderer();
+void test_null_audio_sink();
 
 inline int run_all_tests() {
     test_ring_buffer();
     test_clock();
     test_queues();
     test_frame_queue();
+    test_headless_renderer();
+    test_null_audio_sink();
     if (g_failures == 0) {
         std::fprintf(stderr, "ALL TESTS PASSED\n");
         return 0;

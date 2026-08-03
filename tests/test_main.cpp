@@ -14,6 +14,8 @@ int main(int argc, char** argv) {
     if (!only_ring && !only_queues) { std::fprintf(stderr, "RUN clock\n"); std::fflush(stderr); test_clock(); }
     if (!only_ring && !only_clock)  { std::fprintf(stderr, "RUN queues\n"); std::fflush(stderr); test_queues(); }
     if (!only_ring && !only_clock)  { test_frame_queue(); }
+    if (!only_ring && !only_clock)  { test_headless_renderer(); }
+    if (!only_ring && !only_clock)  { test_null_audio_sink(); }
 
     std::fprintf(stderr, "DONE\n");
     std::fflush(stderr);

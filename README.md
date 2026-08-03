@@ -15,6 +15,8 @@
 - 同步：音频主时钟，视频追帧/丢帧，暂停/seek/0.25x–4x 变速
 - UI：Win32 宿主窗口 + Dear ImGui 控制面板（可隐藏、可整体替换）
 - 壁纸模式（一期原型）：挂到桌面 WorkerW 下铺满屏幕 + 点击穿透，Ctrl+Alt+W 或面板按钮切换
+- 接口桩与无头回归：HeadlessRenderer / NullAudioSink，`--headless` 无窗口跑通整条解码→渲染→Present 管线
+- 壁纸浮层控制面板：壁纸模式下独立置顶面板（工作区右上角），不再沉在桌面图标下面
 
 ## 目录结构
 
@@ -69,6 +71,7 @@ build\src\media_player_app.exe samples\test_hevc.mp4 --hw   # 优先硬解
 | H | 显示/隐藏控制面板 |
 
 ### 回归/验收参数（详见 docs/08）
+10. [docs/11-二期规划.md](docs/11-二期规划.md) — 二期路线与模块化契约
 
 | 参数 | 作用 |
 | --- | --- |
@@ -79,6 +82,8 @@ build\src\media_player_app.exe samples\test_hevc.mp4 --hw   # 优先硬解
 | `--device <索引>` | 3s 时切换扬声器（含失败回退） |
 | `--reopen <秒>` | N 秒后重开同一文件（播放中拖入新文件） |
 | `--wallpaper` | 2s 进入壁纸模式、7s 退出（自动回归） |
+| `--headless` | 无头模式：HeadlessRenderer + NullAudioSink，不创建窗口 |
+| `--run-seconds <秒>` | 无头模式运行时长后自动退出（默认 8s） |
 | `--hw` | 优先 D3D11VA 硬解，失败自动降级软解 |
 
 ## 测试

@@ -24,6 +24,11 @@ typedef void (*ME_PresentCallback)(void* user);
 
 /* 生命周期 */
 ME_API ME_Player* me_create_player(void* hwnd, int width, int height);
+/* 创建选项：ME_PLAYER_FLAG_HEADLESS = 无头渲染桩（HeadlessRenderer） */
+/*           ME_PLAYER_FLAG_NULL_AUDIO = 空音频输出桩（NullAudioSink）    */
+#define ME_PLAYER_FLAG_HEADLESS 1
+#define ME_PLAYER_FLAG_NULL_AUDIO 2
+ME_API ME_Player* me_create_player_ex(void* hwnd, int width, int height, int flags);
 ME_API void me_destroy_player(ME_Player* player);
 ME_API const char* me_last_error(ME_Player* player);  /* 最近一次失败原因 */
 ME_API void me_set_log_level(int level);      /* 0=Debug 1=Info 2=Warn 3=Error */
@@ -63,6 +68,10 @@ ME_API void me_set_present_callback(ME_Player* player, ME_PresentCallback cb, vo
 ME_API void me_resize(ME_Player* player, int width, int height);
 ME_API void* me_get_d3d11_device(ME_Player* player);   /* ID3D11Device*（供 ImGui 等外部渲染叠加） */
 ME_API void* me_get_d3d11_context(ME_Player* player);  /* ID3D11DeviceContext* */
+
+/* 无头模式统计（非无头返回 -1） */
+ME_API long long me_headless_draw_count(ME_Player* player);
+ME_API long long me_headless_present_count(ME_Player* player);
 
 #ifdef __cplusplus
 }

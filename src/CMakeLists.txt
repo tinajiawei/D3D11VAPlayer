@@ -22,6 +22,8 @@ add_library(media_engine_core STATIC
     media/frame_queue.cpp
     media/media_source.cpp
     media/decoder_factory.cpp
+    render/headless_renderer.cpp
+    audio/null_audio_sink.cpp
 )
 
 # ---- 解码器插件 DLL（输出到 exe 旁 plugin\1\，参考 RDCodec plugin 目录模式） ----
@@ -72,6 +74,8 @@ target_link_libraries(media_engine PRIVATE media_engine_core d3d11 dxgi d3dcompi
 add_executable(media_player_app
     ui/host_window.cpp
     ui/control_panel.cpp
+    ui/panel_window.cpp
+    ui/floating_panel.cpp
     ui/main.cpp
 )
 target_link_libraries(media_player_app PRIVATE media_engine imgui user32 gdi32 shell32 comdlg32)

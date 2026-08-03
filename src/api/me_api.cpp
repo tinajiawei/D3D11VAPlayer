@@ -1,5 +1,6 @@
 #include "api/me_api.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -7,12 +8,14 @@
 
 #include "player/media_player.h"
 #include "render/d3d11_renderer.h"
+#include "render/headless_renderer.h"
+#include "audio/null_audio_sink.h"
 #include "core/clock.h"
 #include "core/log.h"
 
 // ME_Player 是 C API 的全局不透明类型：内部持有引擎对象
 struct ME_Player {
-    me::D3D11Renderer renderer;
+    std::unique_ptr<me::IRenderer> renderer;
     me::MediaPlayer player;
     ME_PresentCallback present_cb = nullptr;
     void* present_user = nullptr;
@@ -23,15 +26,30 @@ struct ME_Player {
 };
 
 ME_API ME_Player* me_create_player(void* hwnd, int width, int height) {
+    return me_create_player_ex(hwnd, width, height, 0);
+}
+
+ME_API ME_Player* me_create_player_ex(void* hwnd, int width, int height, int flags) {
     ME_Player* p = new ME_Player();
-    me::Error err = p->renderer.init(static_cast<HWND>(hwnd), width, height);
+    const bool headless = (flags & ME_PLAYER_FLAG_HEADLESS) != 0;
+    const bool null_audio = (flags & ME_PLAYER_FLAG_NULL_AUDIO) != 0;
+
+    if (headless) {
+        p->renderer = std::make_unique<me::HeadlessRenderer>();
+    } else {
+        p->renderer = std::make_unique<me::D3D11Renderer>();
+    }
+    me::Error err = p->renderer->init(static_cast<HWND>(hwnd), width, height);
     if (!err.ok()) {
         p->last_error = err.message();
     }
-    p->player.set_renderer(&p->renderer);
+    if (null_audio) {
+        p->player.set_audio_sink(std::make_unique<me::NullAudioSink>());
+    }
+    p->player.set_renderer(p->renderer.get());
     p->player.set_present_hook([p] {
         if (p->present_cb) p->present_cb(p->present_user);
-        p->renderer.present_swapchain();
+        p->renderer->present_swapchain();
     });
     return p;
 }
@@ -39,7 +57,7 @@ ME_API ME_Player* me_create_player(void* hwnd, int width, int height) {
 ME_API void me_destroy_player(ME_Player* player) {
     if (!player) return;
     player->player.close();
-    player->renderer.shutdown();
+    player->renderer->shutdown();
     delete player;
 }
 
@@ -168,13 +186,24 @@ ME_API void me_set_present_callback(ME_Player* player, ME_PresentCallback cb, vo
 }
 
 ME_API void me_resize(ME_Player* player, int width, int height) {
-    if (player) player->renderer.set_pending_size(width, height);
+    if (player) player->renderer->set_pending_size(width, height);
 }
 
 ME_API void* me_get_d3d11_device(ME_Player* player) {
-    return player ? player->renderer.device() : nullptr;
+    return player ? player->renderer->device() : nullptr;
 }
 
 ME_API void* me_get_d3d11_context(ME_Player* player) {
-    return player ? player->renderer.context() : nullptr;
+    return player ? player->renderer->context() : nullptr;
+}
+ME_API long long me_headless_draw_count(ME_Player* player) {
+    if (!player) return -1;
+    auto* r = dynamic_cast<me::HeadlessRenderer*>(player->renderer.get());
+    return r ? static_cast<long long>(r->draw_count()) : -1;
+}
+
+ME_API long long me_headless_present_count(ME_Player* player) {
+    if (!player) return -1;
+    auto* r = dynamic_cast<me::HeadlessRenderer*>(player->renderer.get());
+    return r ? static_cast<long long>(r->present_count()) : -1;
 }

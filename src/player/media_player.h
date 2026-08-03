@@ -9,7 +9,7 @@
 #include <vector>
 #include <thread>
 
-#include "audio/audio_output.h"
+#include "api/iaudio_sink.h"
 #include "audio/audio_resampler.h"
 #include "media/decoder_factory.h"
 #include "media/frame_queue.h"
@@ -35,6 +35,7 @@ public:
     // 渲染器由宿主窗口创建后注入；present_hook 在渲染线程每帧调用（用于叠加 ImGui）。
     void set_renderer(IRenderer* renderer) { renderer_ = renderer; }
     void set_present_hook(std::function<void()> hook) { present_hook_ = std::move(hook); }
+    void set_audio_sink(std::unique_ptr<IAudioSink> sink);
 
     Error open(const std::string& path, bool prefer_hw = false);
     void close();
@@ -56,8 +57,8 @@ public:
     bool hw_active() const { return hw_active_.load(); }
     int dropped_frames() const { return dropped_frames_.load(); }
     std::string decoder_name() const;
-    std::string audio_device_name() const { return audio_.device_name(); }
-    std::vector<std::string> audio_devices() const { return audio_.device_names(); }
+    std::string audio_device_name() const { return audio_->device_name(); }
+    std::vector<std::string> audio_devices() const { return audio_->device_names(); }
     Error set_audio_device(int index);
     double speed() const { return speed_.load(); }
     float volume() const { return volume_.load(); }
@@ -74,7 +75,7 @@ private:
     PacketQueue audio_packets_{1024, 16 * 1024 * 1024};
     FrameQueue video_frames_{8};
     std::unique_ptr<ISyncEngine> sync_;
-    AudioOutput audio_;
+    std::unique_ptr<IAudioSink> audio_;
     AudioResampler resampler_;
     IRenderer* renderer_ = nullptr;
     std::function<void()> present_hook_;

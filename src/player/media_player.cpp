@@ -6,11 +6,16 @@
 
 #include "core/clock.h"
 #include "core/log.h"
+#include "audio/audio_output.h"
 #include "sync/sync_engine.h"
 
 namespace me {
 
-MediaPlayer::MediaPlayer() : sync_(std::make_unique<SyncEngine>()) {}
+MediaPlayer::MediaPlayer() : sync_(std::make_unique<SyncEngine>()), audio_(std::make_unique<AudioOutput>()) {}
+void MediaPlayer::set_audio_sink(std::unique_ptr<IAudioSink> sink) {
+    if (sink) audio_ = std::move(sink);
+}
+
 
 namespace {
 constexpr double kDropThresholdSeconds = -0.04;  // 视频落后音频超过 40ms 就丢帧
@@ -114,19 +119,19 @@ Error MediaPlayer::open(const std::string& path, bool prefer_hw) {
     // 音频输出：失败不致命（视频照常播，只是没声音）
     audio_enabled_ = false;
     if (has_audio_.load()) {
-        Error aerr = audio_.init(48000, 2);
+        Error aerr = audio_->init(48000, 2);
         if (!aerr.ok()) {
             ME_LOG_WARN("音频输出初始化失败（已尝试所有活动端点，静音播放）: ", aerr.message());
         } else {
-            audio_.set_volume(volume_.load());
-            Error serr = audio_.start();
+            audio_->set_volume(volume_.load());
+            Error serr = audio_->start();
             if (serr.ok()) {
-                sync_->attach_audio(&audio_);
+                sync_->attach_audio(audio_.get());
                 const AVCodecParameters* ap = source_.audio_stream()->codecpar;
-                active_resample_rate_ = audio_.sample_rate() / speed_.load();
+                active_resample_rate_ = audio_->sample_rate() / speed_.load();
                 resampler_.open(ap->ch_layout, static_cast<AVSampleFormat>(ap->format),
                                 ap->sample_rate, static_cast<int>(std::lround(active_resample_rate_)),
-                                audio_.channels());
+                                audio_->channels());
                 audio_enabled_ = true;
             } else {
                 ME_LOG_WARN("音频流启动失败（静音播放）: ", serr.message());
@@ -163,11 +168,11 @@ void MediaPlayer::close() {
         video_packets_.abort();
         audio_packets_.abort();
         video_frames_.abort();
-        if (audio_.is_active()) audio_.stop();
-        audio_.abort_ring();  // 唤醒阻塞在环形缓冲写入的音频解码线程，否则 join 卡死
+        if (audio_->is_active()) audio_->stop();
+        audio_->abort_ring();  // 唤醒阻塞在环形缓冲写入的音频解码线程，否则 join 卡死
         stop_threads();
         resampler_.close();
-        audio_.shutdown();
+        audio_->shutdown();
         sync_->detach_audio();
         source_.close();
         video_decoder_.reset();
@@ -179,12 +184,12 @@ void MediaPlayer::close() {
 
 void MediaPlayer::pause() {
     sync_->set_paused(true);
-    if (has_audio_.load()) audio_.pause_stream();
+    if (has_audio_.load()) audio_->pause_stream();
 }
 
 void MediaPlayer::play() {
     sync_->set_paused(false);
-    if (has_audio_.load()) audio_.resume_stream();
+    if (has_audio_.load()) audio_->resume_stream();
 }
 
 void MediaPlayer::toggle_pause() {
@@ -206,9 +211,9 @@ void MediaPlayer::seek(double seconds) {
     video_packets_.flush();
     audio_packets_.flush();
     video_frames_.flush();
-    if (has_audio_.load()) audio_.clear_ring();
+    if (has_audio_.load()) audio_->clear_ring();
     if (has_audio_.load() && audio_enabled_) {
-        Error rerr = audio_.reset_stream();
+        Error rerr = audio_->reset_stream();
         if (!rerr.ok()) ME_LOG_ERROR("seek 重置音频流失败（可能无声）: ", rerr.message());
     }
     source_.seek(seconds);
@@ -240,7 +245,7 @@ void MediaPlayer::set_speed(double speed) {
 
 void MediaPlayer::set_volume(float volume) {
     volume_.store(volume);
-    audio_.set_volume(volume);
+    audio_->set_volume(volume);
 }
 
 double MediaPlayer::position() const {
@@ -253,12 +258,12 @@ Error MediaPlayer::set_audio_device(int index) {
         return Error::make(Err::InvalidArgument, "当前媒体没有音频流");
     }
     const double pos = position();  // 保持当前播放位置
-    Error err = audio_.switch_device(static_cast<size_t>(index));
+    Error err = audio_->switch_device(static_cast<size_t>(index));
     if (!err.ok()) {
         // 切换失败时旧设备已释放：回退默认设备，避免播放继续但无声
         ME_LOG_ERROR("切换扬声器失败: ", err.message(), "，回退默认设备");
-        err = audio_.init(48000, 2);
-        if (err.ok()) err = audio_.start();
+        err = audio_->init(48000, 2);
+        if (err.ok()) err = audio_->start();
         if (!err.ok()) {
             ME_LOG_ERROR("回退默认设备失败: ", err.message());
             return err;
@@ -267,7 +272,7 @@ Error MediaPlayer::set_audio_device(int index) {
     sync_->seek(pos);  // 切换后重新对齐主时钟
     if (has_audio_.load() && audio_enabled_) sync_->freeze_until_audio(pos, seek_gen_.load());
     audio_resampler_reopen_.store(true);  // 新设备采样率可能不同，强制重开重采样器
-    audio_.clear_ring();
+    audio_->clear_ring();
     return Error::success();
 }
 
@@ -392,7 +397,7 @@ void MediaPlayer::audio_decode_loop() {
             if (!running_.load()) break;
             last_ad_gen = seek_gen_.load();
             audio_done_.store(false);
-            audio_.clear_ring();
+            audio_->clear_ring();
             eof = false;
             continue;
         }
@@ -402,15 +407,15 @@ void MediaPlayer::audio_decode_loop() {
             if (resampler_.is_open()) {
                 const AVCodecParameters* ap = source_.audio_stream()->codecpar;
                 resampler_.close();
-                const int target_rate = static_cast<int>(std::lround(audio_.sample_rate() / speed_.load()));
+                const int target_rate = static_cast<int>(std::lround(audio_->sample_rate() / speed_.load()));
                 Error rerr = resampler_.open(ap->ch_layout, static_cast<AVSampleFormat>(ap->format),
-                                             ap->sample_rate, target_rate, audio_.channels());
+                                             ap->sample_rate, target_rate, audio_->channels());
                 if (!rerr.ok()) {
                     ME_LOG_ERROR("seek 重开重采样器失败（稍后重试）: ", rerr.message());
                     audio_resampler_reopen_.store(true);
                 } else {
-                    active_resample_rate_ = audio_.sample_rate() / speed_.load();
-                    audio_.clear_ring();
+                    active_resample_rate_ = audio_->sample_rate() / speed_.load();
+                    audio_->clear_ring();
                     resume_pending = true;
                 }
 
@@ -424,37 +429,37 @@ void MediaPlayer::audio_decode_loop() {
             if (resampler_.is_open()) {
                 const AVCodecParameters* ap = source_.audio_stream()->codecpar;
                 resampler_.close();
-                const int target_rate = static_cast<int>(std::lround(audio_.sample_rate() / speed_.load()));
+                const int target_rate = static_cast<int>(std::lround(audio_->sample_rate() / speed_.load()));
                 Error rerr = resampler_.open(ap->ch_layout, static_cast<AVSampleFormat>(ap->format),
-                                             ap->sample_rate, target_rate, audio_.channels());
+                                             ap->sample_rate, target_rate, audio_->channels());
                 if (!rerr.ok()) {
                     // 重开失败会让重采样器处于关闭态：立刻重试，否则本帧 convert 失败导致无声
                     ME_LOG_ERROR("变速重开重采样器失败（稍后重试）: ", rerr.message());
                     audio_resampler_reopen_.store(true);
                     continue;
                 }
-                active_resample_rate_ = audio_.sample_rate() / speed_.load();
-                audio_.clear_ring();
+                active_resample_rate_ = audio_->sample_rate() / speed_.load();
+                audio_->clear_ring();
                 ME_LOG_INFO("设备/变速重采样: ", active_resample_rate_, "Hz");
                 resume_pending = true;
             }
         }
         // 变速/换设备：目标倍率或设备采样率变化时重开重采样器
         if (resampler_.is_open()) {
-            const double target_rate = audio_.sample_rate() / speed_.load();
+            const double target_rate = audio_->sample_rate() / speed_.load();
             if (std::fabs(target_rate - active_resample_rate_) > 1.0) {
                 const AVCodecParameters* ap = source_.audio_stream()->codecpar;
                 resampler_.close();
                 Error rerr = resampler_.open(ap->ch_layout, static_cast<AVSampleFormat>(ap->format),
                                              ap->sample_rate, static_cast<int>(std::lround(target_rate)),
-                                             audio_.channels());
+                                             audio_->channels());
                 if (!rerr.ok()) {
                     ME_LOG_ERROR("变速重采样失败（稍后重试）: ", rerr.message());
                     audio_resampler_reopen_.store(true);
                     continue;
                 }
                 active_resample_rate_ = target_rate;
-                audio_.clear_ring();
+                audio_->clear_ring();
                 ME_LOG_INFO("变速重采样: ", active_resample_rate_, "Hz");
             }
         }
@@ -495,7 +500,7 @@ void MediaPlayer::audio_decode_loop() {
                             discard_until_target_.store(false);
                         }
                     }
-                    audio_.write(pcm.data(), pcm.size());
+                    audio_->write(pcm.data(), pcm.size());
                     // 调试：每秒记录写入音频帧的 pts，用于验证内容速率是否跟随倍率
                     static double last_pts_log = 0.0;
                     const double now_q = qpc_seconds();
@@ -529,7 +534,7 @@ void MediaPlayer::audio_decode_loop() {
     if (resampler_.is_open()) {
         pcm.clear();
         resampler_.drain(pcm);
-        if (!pcm.empty()) audio_.write(pcm.data(), pcm.size());
+        if (!pcm.empty()) audio_->write(pcm.data(), pcm.size());
     }
     audio_done_.store(true);
     ME_LOG_INFO("音频解码线程结束");
