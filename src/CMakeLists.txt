@@ -53,6 +53,19 @@ target_include_directories(decoder_d3d11va PRIVATE ${FFMPEG_ROOT}/include)
 target_link_libraries(decoder_d3d11va PRIVATE avcodec avutil)
 set_target_properties(decoder_d3d11va PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:media_player_app>/plugin/1")
 
+add_library(decoder_amf SHARED
+    media/amf_decoder.cpp
+    media/plugin_amf.cpp
+    core/av_utils.cpp
+    core/log.cpp
+)
+target_compile_definitions(decoder_amf PRIVATE ME_DECODER_PLUGIN_BUILD)
+target_include_directories(decoder_amf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_directories(decoder_amf PRIVATE ${FFMPEG_ROOT}/lib)
+target_include_directories(decoder_amf PRIVATE ${FFMPEG_ROOT}/include)
+target_link_libraries(decoder_amf PRIVATE avcodec avutil)
+set_target_properties(decoder_amf PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:media_player_app>/plugin/1")
+
 # ---- 渲染器插件 DLL（plugin\2\，D3D11 后端从引擎拆出；docs/11 M3）----
 add_library(renderer_plugin SHARED
     plugins/renderer_plugin.cpp
@@ -118,9 +131,16 @@ add_executable(media_player_app
     ui/floating_panel.cpp
     ui/tray_icon.cpp
     ui/main.cpp
+    web/webview_wallpaper.cpp
 )
 target_link_libraries(media_player_app PRIVATE media_engine imgui user32 gdi32 shell32 comdlg32)
+target_include_directories(media_player_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/webview2/include)
+target_link_libraries(media_player_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/webview2/lib/x64/WebView2LoaderStatic.lib)
 copy_ffmpeg_dlls(media_player_app)
+add_custom_command(TARGET media_player_app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/webview2/WebView2Loader.dll"
+            "$<TARGET_FILE_DIR:media_player_app>")
 
 # ---- FFmpeg 链接冒烟测试（验证 GCC 生成的导入库与 MSVC 兼容） ----
 add_executable(ffmpeg_smoke smoke/main.cpp)

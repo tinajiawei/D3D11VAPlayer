@@ -19,6 +19,8 @@
 - 壁纸浮层控制面板：壁纸模式下独立置顶面板（工作区右上角），不再沉在桌面图标下面
 - 壁纸增强：面板位置记忆（media_engine_panel.ini）+ 系统托盘图标（显示/隐藏面板、切换壁纸、退出）
 - 模块 DLL 化（M3 完成）：渲染 plugin\2\renderer.dll + 音频 plugin\2\audio.dll + 同步 plugin\2\sync.dll；引擎按 ABI 工厂加载，渲染/同步为硬依赖（缺失明确报错），音频缺插件回退无声（NullAudioSink）
+- 网页壁纸（M4）：WebView2 渲染任意 URL 到桌面（内置 CSS 动画演示页），控制面板可切换
+- 更多硬解（M5）：AMF（AMD）插件 decoder_amf.dll，HEVC/H.264；ME_HW_BACKEND 环境变量可强制指定后端
 
 ## 目录结构
 

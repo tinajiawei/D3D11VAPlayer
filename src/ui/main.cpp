@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdio>
 #include <string>
+#include <mutex>
 #include <thread>
 
 #include <windows.h>
@@ -13,6 +14,7 @@
 #include "ui/control_panel.h"
 #include "ui/floating_panel.h"
 #include "ui/tray_icon.h"
+#include "web/webview_wallpaper.h"
 #include "ui/host_window.h"
 #include "ui/playback_controller.h"
 
@@ -22,6 +24,10 @@ me::HostWindow g_window;
 me::ControlPanel g_panel;
 me::FloatingPanel g_floating_panel;
 me::TrayIcon g_tray;
+me::WebViewWallpaper g_web_wallpaper;
+std::mutex g_request_mutex;
+bool g_web_wallpaper_toggle_request = false;
+std::string g_web_wallpaper_url;
 me::PlaybackController g_controller(nullptr);
 bool g_show_panel = true;
 std::atomic<bool> g_open_requested{false};
@@ -82,6 +88,27 @@ void toggle_wallpaper() {
 }
 
 // 引擎渲染线程每帧回调：叠加 ImGui 控制面板（Present 由引擎在回调后执行）
+void toggle_web_wallpaper(const std::string& url) {
+    if (g_web_wallpaper.active()) {
+        g_web_wallpaper.destroy();
+        std::fprintf(stderr, "[webwallpaper] 退出网页壁纸\n");
+        return;
+    }
+    // 与视频壁纸互斥：先退出视频壁纸模式（含浮层控制面板）
+    if (g_window.wallpaper_mode()) {
+        g_floating_panel.request_destroy();
+        g_window.exit_wallpaper_mode();
+        g_tray.set_wallpaper_mode(false);
+    }
+    RECT rc = {};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &rc, 0);
+    if (g_web_wallpaper.create(nullptr, rc, url)) {
+        std::fprintf(stderr, "[webwallpaper] 进入网页壁纸\n");
+    } else {
+        std::fprintf(stderr, "[webwallpaper] 创建失败（找不到 WorkerW）\n");
+    }
+}
+
 void present_callback(void*) {
     ImGuiIO& io = ImGui::GetIO();
     io.AddMousePosEvent(static_cast<float>(g_window.mouse_x()),
@@ -103,6 +130,12 @@ void present_callback(void*) {
     if (requests.wallpaper_toggle) g_wallpaper_requested.store(true);
     if (requests.open_file) {
         g_open_requested.store(true);
+    }
+
+    if (requests.web_wallpaper_toggle) {
+        std::lock_guard<std::mutex> lock(g_request_mutex);
+        g_web_wallpaper_toggle_request = true;
+        g_web_wallpaper_url = requests.web_url;
     }
 
     ImGui::Render();
@@ -201,6 +234,7 @@ int wmain(int argc, wchar_t** argv) {
     double speed_test = -1.0;
     bool pause_test = false;
     bool wallpaper_test = false;
+    std::wstring web_wallpaper_url_cli;
     int device_test = -1;
     for (int i = 1; i < argc; ++i) {
         if (std::wstring(argv[i]) == L"--hw") prefer_hw_cli = true;
@@ -228,15 +262,18 @@ int wmain(int argc, wchar_t** argv) {
         if (std::wstring(argv[i]) == L"--wallpaper") {
             wallpaper_test = true;
         }
+        if (std::wstring(argv[i]) == L"--web-wallpaper" && i + 1 < argc) {
+            web_wallpaper_url_cli = argv[i + 1];
+        }
     }
     std::wstring first_media;
     for (int i = 1; i < argc; ++i) {
         const std::wstring arg(argv[i]);
-        if ((arg == L"--seek" || arg == L"--eof-seek" || arg == L"--speed" || arg == L"--device" || arg == L"--run-seconds") && i + 1 < argc) {
+        if ((arg == L"--seek" || arg == L"--eof-seek" || arg == L"--speed" || arg == L"--device" || arg == L"--run-seconds" || arg == L"--web-wallpaper") && i + 1 < argc) {
             ++i;  // 跳过带值的参数
             continue;
         }
-        if (arg == L"--pause-test" || arg == L"--wallpaper" || arg == L"--headless") {
+        if (arg == L"--pause-test" || arg == L"--wallpaper" || arg == L"--headless" || arg == L"--web-wallpaper") {
             continue;
         }
         if (arg == L"--reopen" && i + 1 < argc) {
@@ -319,6 +356,25 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     // 主线程：消息循环 + 处理"打开文件"请求（对话框必须在主线程）
+    if (!web_wallpaper_url_cli.empty() && !g_headless_cli) {
+        const std::string wurl = utf8_from_wide(web_wallpaper_url_cli);
+        // WebView2 控制器要求宿主窗口所在线程有消息泵：只能经主循环消费请求
+        std::thread([wurl] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            {
+                std::lock_guard<std::mutex> lock(g_request_mutex);
+                g_web_wallpaper_toggle_request = true;
+                g_web_wallpaper_url = wurl;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+            {
+                std::lock_guard<std::mutex> lock(g_request_mutex);
+                g_web_wallpaper_toggle_request = true;
+                g_web_wallpaper_url = wurl;
+            }
+        }).detach();
+    }
+
     if (g_headless_cli) {
         std::fprintf(stderr, "[headless] 管线运行 %.1fs 后退出\n", g_run_seconds);
         Sleep(static_cast<DWORD>(g_run_seconds * 1000.0));
@@ -337,6 +393,7 @@ int wmain(int argc, wchar_t** argv) {
                 g_floating_panel.request_destroy();
                 me_destroy_player(g_engine);  // 先停渲染线程
                 g_floating_panel.destroy_now();
+                g_web_wallpaper.destroy();
                 g_tray.destroy();
                 ImGui_ImplDX11_Shutdown();
                 ImGui_ImplWin32_Shutdown();
@@ -349,6 +406,14 @@ int wmain(int argc, wchar_t** argv) {
             DispatchMessageW(&msg);
         }
         if (g_wallpaper_requested.exchange(false)) toggle_wallpaper();
+        {
+            std::lock_guard<std::mutex> lock(g_request_mutex);
+            if (g_web_wallpaper_toggle_request) {
+                g_web_wallpaper_toggle_request = false;
+                const std::string url = g_web_wallpaper_url;
+                toggle_web_wallpaper(url);
+            }
+        }
         if (g_open_requested.exchange(false)) {
             wchar_t file[MAX_PATH] = {};
             OPENFILENAMEW ofn = {};

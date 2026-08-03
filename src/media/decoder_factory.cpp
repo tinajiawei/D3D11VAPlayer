@@ -2,6 +2,7 @@
 
 #include <mutex>
 #include <vector>
+#include <cstdlib>
 
 #include <windows.h>
 
@@ -107,13 +108,25 @@ std::unique_ptr<IDecoder> DecoderFactory::create(const AVCodecParameters& params
     load_plugins_once();
 
     // 硬解优先：尝试所有注册的硬件后端
+    // 硬解优先：依次尝试 d3d11va -> amf，可用 ME_HW_BACKEND 强制指定
     if (prefer_hw) {
-        auto decoder = open_named("d3d11va", params);
-        if (decoder) {
-            ME_LOG_INFO("解码器选择: ", decoder->name());
-            return decoder;
+        const char* forced = std::getenv("ME_HW_BACKEND");
+        if (forced && *forced) {
+            auto forced_decoder = open_named(forced, params);
+            if (forced_decoder) {
+                ME_LOG_INFO("解码器选择: ", forced_decoder->name());
+                return forced_decoder;
+            }
+            ME_LOG_WARN("强制后端 ", forced, " 初始化失败");
         }
-        ME_LOG_WARN("硬解后端 d3d11va 初始化失败，尝试下一个");
+        for (const char* hw_name : {"d3d11va", "amf"}) {
+            auto decoder = open_named(hw_name, params);
+            if (decoder) {
+                ME_LOG_INFO("解码器选择: ", decoder->name());
+                return decoder;
+            }
+            ME_LOG_WARN("硬解后端 ", hw_name, " 初始化失败，尝试下一个");
+        }
     }
     // 软解兜底
     auto decoder = open_named("sw", params);
