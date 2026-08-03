@@ -1,8 +1,21 @@
 #include "ui/panel_window.h"
 
+#include <string>
+
 #include <windowsx.h>
 
 namespace me {
+
+namespace {
+// 面板位置记忆文件（exe 同目录 media_engine_panel.ini，[panel] x=/y=）
+std::wstring panel_ini_path() {
+    wchar_t buf[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, buf, MAX_PATH)) return L"media_engine_panel.ini";
+    wchar_t* slash = wcsrchr(buf, L'\\');
+    if (slash) *slash = L'\0';
+    return std::wstring(buf) + L"\\media_engine_panel.ini";
+}
+}  // namespace
 
 bool PanelWindow::create(HINSTANCE instance, int width, int height) {
     instance_ = instance;
@@ -23,17 +36,33 @@ bool PanelWindow::create(HINSTANCE instance, int width, int height) {
                             nullptr, nullptr, instance_, this);
     if (!hwnd_) return false;
 
-    // 默认停在工作区右上角（后续可加位置记忆）
+    // 位置记忆：优先恢复上次保存的坐标；不在任何工作区内则回退右上角
     RECT wa = {};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
-    const int x = wa.right - width_ - 16;
-    const int y = wa.top + 16;
+    int x = GetPrivateProfileIntW(L"panel", L"x", INT_MIN, panel_ini_path().c_str());
+    int y = GetPrivateProfileIntW(L"panel", L"y", INT_MIN, panel_ini_path().c_str());
+    const bool saved_ok = x != INT_MIN && y != INT_MIN &&
+                          x + 40 < wa.right && x + width_ > wa.left &&
+                          y + 40 < wa.bottom && y + height_ > wa.top;
+    if (!saved_ok) {
+        x = wa.right - width_ - 16;
+        y = wa.top + 16;
+    }
     SetWindowPos(hwnd_, HWND_TOPMOST, x, y, width_, height_, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     return true;
 }
 
 void PanelWindow::destroy() {
     if (hwnd_) {
+        // 保存当前位置，下次进入壁纸模式恢复
+        RECT rc = {};
+        if (GetWindowRect(hwnd_, &rc)) {
+            wchar_t buf[32] = {};
+            swprintf_s(buf, L"%d", rc.left);
+            WritePrivateProfileStringW(L"panel", L"x", buf, panel_ini_path().c_str());
+            swprintf_s(buf, L"%d", rc.top);
+            WritePrivateProfileStringW(L"panel", L"y", buf, panel_ini_path().c_str());
+        }
         DestroyWindow(hwnd_);
         hwnd_ = nullptr;
     }

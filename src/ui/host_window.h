@@ -28,6 +28,9 @@ public:
     void set_file_drop_callback(FileDropCallback callback) { on_file_drop_ = std::move(callback); }
     void set_key_callback(KeyCallback callback) { on_key_ = std::move(callback); }
     void set_resize_callback(ResizeCallback callback) { on_resize_ = std::move(callback); }
+    // 应用级消息（托盘回调等）：返回 true 表示已消费
+    using AppMessageCallback = std::function<bool(UINT msg, WPARAM wp, LPARAM lp)>;
+    void set_app_message_callback(AppMessageCallback callback) { on_app_message_ = std::move(callback); }
 
     // ImGui 输入：主线程 WndProc 写，渲染线程读（避免跨线程调用 ImGui 输入接口的竞态）
     int take_mouse_wheel();
@@ -51,6 +54,7 @@ private:
     FileDropCallback on_file_drop_;
     KeyCallback on_key_;
     ResizeCallback on_resize_;
+    AppMessageCallback on_app_message_;
     std::atomic<int> mouse_wheel_{0};
     std::atomic<bool> left_down_{false};
     std::atomic<int> mouse_x_{0};

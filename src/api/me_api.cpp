@@ -7,15 +7,64 @@
 #include <windows.h>
 
 #include "player/media_player.h"
-#include "render/d3d11_renderer.h"
+#include "api/renderer_plugin.h"
 #include "render/headless_renderer.h"
 #include "audio/null_audio_sink.h"
 #include "core/clock.h"
 #include "core/log.h"
 
+namespace {
+using RendererCreateFn = void* (*)(int, void*, int, int, char*, int);
+using RendererDestroyFn = void (*)(void*);
+
+struct RendererPluginApi {
+    HMODULE module = nullptr;
+    RendererCreateFn create = nullptr;
+    RendererDestroyFn destroy = nullptr;
+};
+
+RendererPluginApi& renderer_plugin_api() {
+    static RendererPluginApi api = [] {
+        RendererPluginApi a;
+        wchar_t path[MAX_PATH] = {};
+        if (GetModuleFileNameW(nullptr, path, MAX_PATH)) {
+            wchar_t* slash = wcsrchr(path, static_cast<wchar_t>(92));
+            if (slash) *slash = 0;
+            wcscat_s(path, L"\\plugin\\2\\renderer.dll");
+            a.module = LoadLibraryW(path);
+            if (a.module) {
+                a.create = reinterpret_cast<RendererCreateFn>(
+                    GetProcAddress(a.module, "me_renderer_create"));
+                a.destroy = reinterpret_cast<RendererDestroyFn>(
+                    GetProcAddress(a.module, "me_renderer_destroy"));
+                if (!a.create || !a.destroy) {
+                    FreeLibrary(a.module);
+                    a.module = nullptr;
+                }
+            }
+        }
+        return a;
+    }();
+    return api;
+}
+
+void* renderer_plugin_create(int type, void* hwnd, int width, int height,
+                               char* errbuf, int errbuf_size) {
+    RendererPluginApi& api = renderer_plugin_api();
+    if (!api.module || !api.create) return nullptr;
+    return api.create(type, hwnd, width, height, errbuf, errbuf_size);
+}
+
+void renderer_plugin_destroy(void* renderer) {
+    RendererPluginApi& api = renderer_plugin_api();
+    if (api.module && api.destroy) api.destroy(renderer);
+}
+}  // namespace
+
 // ME_Player 是 C API 的全局不透明类型：内部持有引擎对象
 struct ME_Player {
     std::unique_ptr<me::IRenderer> renderer;
+    bool renderer_from_plugin_ = false;
     me::MediaPlayer player;
     ME_PresentCallback present_cb = nullptr;
     void* present_user = nullptr;
@@ -36,12 +85,20 @@ ME_API ME_Player* me_create_player_ex(void* hwnd, int width, int height, int fla
 
     if (headless) {
         p->renderer = std::make_unique<me::HeadlessRenderer>();
+        me::Error err = p->renderer->init(static_cast<HWND>(hwnd), width, height);
+        if (!err.ok()) p->last_error = err.message();
     } else {
-        p->renderer = std::make_unique<me::D3D11Renderer>();
-    }
-    me::Error err = p->renderer->init(static_cast<HWND>(hwnd), width, height);
-    if (!err.ok()) {
-        p->last_error = err.message();
+        char errbuf[256] = {};
+        void* r = renderer_plugin_create(ME_RENDERER_TYPE_D3D11, hwnd, width, height,
+                                         errbuf, static_cast<int>(sizeof(errbuf)));
+        if (!r) {
+            p->last_error = errbuf[0]
+                ? ("渲染器插件创建失败: " + std::string(errbuf))
+                : "渲染器插件加载失败: plugin\\2\\renderer.dll";
+        } else {
+            p->renderer.reset(static_cast<me::IRenderer*>(r));
+            p->renderer_from_plugin_ = true;
+        }
     }
     if (null_audio) {
         p->player.set_audio_sink(std::make_unique<me::NullAudioSink>());
@@ -57,7 +114,11 @@ ME_API ME_Player* me_create_player_ex(void* hwnd, int width, int height, int fla
 ME_API void me_destroy_player(ME_Player* player) {
     if (!player) return;
     player->player.close();
-    player->renderer->shutdown();
+    if (player->renderer_from_plugin_) {
+        renderer_plugin_destroy(player->renderer.release());
+    } else if (player->renderer) {
+        player->renderer->shutdown();
+    }
     delete player;
 }
 
@@ -76,6 +137,10 @@ ME_API const char* me_last_error(ME_Player* player) {
 
 ME_API int me_open(ME_Player* player, const char* path_utf8, int prefer_hw) {
     if (!player) return -1;
+    if (!player->renderer) {
+        player->last_error = "渲染器不可用（插件加载失败）";
+        return -1;
+    }
     const me::Error err = player->player.open(path_utf8 ? path_utf8 : "", prefer_hw != 0);
     player->last_error = err.message();
     return err.ok() ? 0 : -1;

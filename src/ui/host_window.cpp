@@ -148,6 +148,7 @@ LRESULT HostWindow::handle_message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             PostQuitMessage(0);
             return 0;
         default:
+            if (on_app_message_ && on_app_message_(msg, wp, lp)) return 0;
             return DefWindowProcW(hwnd, msg, wp, lp);
     }
 }

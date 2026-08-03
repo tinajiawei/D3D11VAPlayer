@@ -52,6 +52,22 @@ target_link_directories(decoder_d3d11va PRIVATE ${FFMPEG_ROOT}/lib)
 target_include_directories(decoder_d3d11va PRIVATE ${FFMPEG_ROOT}/include)
 target_link_libraries(decoder_d3d11va PRIVATE avcodec avutil)
 set_target_properties(decoder_d3d11va PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:media_player_app>/plugin/1")
+
+# ---- 渲染器插件 DLL（plugin\2\，D3D11 后端从引擎拆出；docs/11 M3）----
+add_library(renderer_plugin SHARED
+    plugins/renderer_plugin.cpp
+    render/d3d11_renderer.cpp
+    core/av_utils.cpp
+    core/log.cpp
+)
+target_compile_definitions(renderer_plugin PRIVATE ME_RENDERER_PLUGIN_BUILD)
+target_include_directories(renderer_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_directories(renderer_plugin PRIVATE ${FFMPEG_ROOT}/lib)
+target_include_directories(renderer_plugin PRIVATE ${FFMPEG_ROOT}/include)
+target_link_libraries(renderer_plugin PRIVATE d3d11 dxgi d3dcompiler avutil swscale)
+set_target_properties(renderer_plugin PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:media_player_app>/plugin/2"
+    OUTPUT_NAME "renderer")
 target_include_directories(media_engine_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_directories(media_engine_core PUBLIC ${FFMPEG_ROOT}/lib)
 target_include_directories(media_engine_core PUBLIC ${FFMPEG_ROOT}/include)
@@ -62,13 +78,12 @@ add_library(media_engine SHARED
     sync/sync_engine.cpp
     audio/audio_resampler.cpp
     audio/audio_output.cpp
-    render/d3d11_renderer.cpp
     player/media_player.cpp
     api/me_api.cpp
 )
 target_compile_definitions(media_engine PRIVATE ME_ENGINE_DLL_BUILD)
 target_include_directories(media_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(media_engine PRIVATE media_engine_core d3d11 dxgi d3dcompiler ole32 uuid mmdevapi)
+target_link_libraries(media_engine PRIVATE media_engine_core ole32 uuid mmdevapi)
 
 # ---- 应用：Win32 宿主窗口 + ImGui 控制面板 ----
 add_executable(media_player_app
@@ -76,6 +91,7 @@ add_executable(media_player_app
     ui/control_panel.cpp
     ui/panel_window.cpp
     ui/floating_panel.cpp
+    ui/tray_icon.cpp
     ui/main.cpp
 )
 target_link_libraries(media_player_app PRIVATE media_engine imgui user32 gdi32 shell32 comdlg32)

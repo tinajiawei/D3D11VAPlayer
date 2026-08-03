@@ -17,6 +17,8 @@
 - 壁纸模式（一期原型）：挂到桌面 WorkerW 下铺满屏幕 + 点击穿透，Ctrl+Alt+W 或面板按钮切换
 - 接口桩与无头回归：HeadlessRenderer / NullAudioSink，`--headless` 无窗口跑通整条解码→渲染→Present 管线
 - 壁纸浮层控制面板：壁纸模式下独立置顶面板（工作区右上角），不再沉在桌面图标下面
+- 壁纸增强：面板位置记忆（media_engine_panel.ini）+ 系统托盘图标（显示/隐藏面板、切换壁纸、退出）
+- 模块 DLL 化（M3 第一步）：D3D11 渲染器拆为 plugin\2\renderer.dll，引擎按 ABI 工厂加载，缺插件明确报错
 
 ## 目录结构
 

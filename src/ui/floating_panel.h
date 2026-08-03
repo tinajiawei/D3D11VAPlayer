@@ -33,6 +33,8 @@ public:
     void destroy_now();
 
     bool active() const { return window_.valid(); }
+    // 是否有挂起的创建/销毁请求（present 回调据此决定是否调用 render）
+    bool pending() const { return create_pending_.load() || destroy_pending_.load(); }
 
 private:
     bool create_impl(HINSTANCE instance, ID3D11Device* device, ID3D11DeviceContext* context);

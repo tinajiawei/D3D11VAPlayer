@@ -12,6 +12,7 @@
 #include "imgui_impl_win32.h"
 #include "ui/control_panel.h"
 #include "ui/floating_panel.h"
+#include "ui/tray_icon.h"
 #include "ui/host_window.h"
 #include "ui/playback_controller.h"
 
@@ -20,6 +21,7 @@ namespace {
 me::HostWindow g_window;
 me::ControlPanel g_panel;
 me::FloatingPanel g_floating_panel;
+me::TrayIcon g_tray;
 me::PlaybackController g_controller(nullptr);
 bool g_show_panel = true;
 std::atomic<bool> g_open_requested{false};
@@ -64,6 +66,7 @@ void toggle_wallpaper() {
     if (g_window.wallpaper_mode()) {
         g_floating_panel.request_destroy();
         g_window.exit_wallpaper_mode();
+        g_tray.set_wallpaper_mode(false);
         std::fprintf(stderr, "[wallpaper] 退出壁纸模式\n");
     } else if (g_window.enter_wallpaper_mode()) {
         if (g_engine) {
@@ -72,6 +75,7 @@ void toggle_wallpaper() {
             g_floating_panel.request_create(GetModuleHandleW(nullptr), dev, ctx);
         }
         std::fprintf(stderr, "[wallpaper] 进入壁纸模式（Ctrl+Alt+W 退出）\n");
+        g_tray.set_wallpaper_mode(true);
     } else {
         std::fprintf(stderr, "[wallpaper] 进入壁纸模式失败（找不到 WorkerW）\n");
     }
@@ -90,7 +94,7 @@ void present_callback(void*) {
     ImGui::NewFrame();
 
     me::PanelRequest requests;
-    if (g_floating_panel.active()) {
+    if (g_floating_panel.active() || g_floating_panel.pending()) {
         g_floating_panel.render(g_panel, g_controller, requests, &g_show_panel);
     } else {
         g_panel.draw(g_controller, requests, &g_show_panel);
@@ -154,6 +158,22 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     // ImGui 初始化（此后所有 ImGui 调用都发生在渲染线程）
+    if (!g_headless_cli) {
+        g_window.set_app_message_callback([](UINT, WPARAM wp, LPARAM lp) {
+            return g_tray.handle_message(wp, lp);
+        });
+        g_tray.set_command_callback([](int cmd) {
+            switch (cmd) {
+                case me::kTrayShowPanel: g_show_panel = true; break;
+                case me::kTrayHidePanel: g_show_panel = false; break;
+                case me::kTrayToggleWallpaper: g_wallpaper_requested.store(true); break;
+                case me::kTrayExit: PostMessageW(g_window.handle(), WM_CLOSE, 0, 0); break;
+                default: break;
+            }
+        });
+        g_tray.create(GetModuleHandleW(nullptr), g_window.handle());
+    }
+
     if (!g_headless_cli) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -317,6 +337,7 @@ int wmain(int argc, wchar_t** argv) {
                 g_floating_panel.request_destroy();
                 me_destroy_player(g_engine);  // 先停渲染线程
                 g_floating_panel.destroy_now();
+                g_tray.destroy();
                 ImGui_ImplDX11_Shutdown();
                 ImGui_ImplWin32_Shutdown();
                 ImGui::DestroyContext();

@@ -78,6 +78,7 @@ bool FloatingPanel::create_impl(HINSTANCE instance, ID3D11Device* device,
     ImGui::SetCurrentContext(main_ctx_);
 
     device_ctx_ = context;
+    std::fprintf(stderr, "[panel] 浮层控制面板已创建 %dx%d\n", width_, height_);
     return true;
 }
 
@@ -88,12 +89,15 @@ void FloatingPanel::destroy_impl() {
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext(panel_ctx_);
         panel_ctx_ = nullptr;
+        // 关键：销毁面板 context 后必须切回主 context，否则当前 context 悬空
+        if (main_ctx_) ImGui::SetCurrentContext(main_ctx_);
     }
     swapchain_.Reset();
     rtv_.Reset();
     window_.destroy();
     main_ctx_ = nullptr;
     device_ctx_ = nullptr;
+    std::fprintf(stderr, "[panel] 浮层控制面板已销毁\n");
 }
 
 void FloatingPanel::render(ControlPanel& panel, PlaybackController& controller,
