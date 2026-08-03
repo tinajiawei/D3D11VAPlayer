@@ -2,7 +2,7 @@
 
 #include <string>
 #include <cstdio>
-#include "core/clock.h"
+#include "api/me_api.h"
 #include "imgui.h"
 
 namespace me {
@@ -12,7 +12,7 @@ void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, 
     // 音频设备列表缓存（2 秒刷新一次，避免每帧枚举 COM 设备）
     static std::vector<std::string> g_devices;
     static double g_dev_refresh = 0.0;
-    const double now_qpc = qpc_seconds();
+    const double now_qpc = me_now_seconds();
     if (g_devices.empty() || now_qpc - g_dev_refresh > 2.0) {
         g_devices = controller.audio_devices();
         g_dev_refresh = now_qpc;

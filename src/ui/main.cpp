@@ -1,18 +1,15 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
-#include <thread>
 #include <string>
+#include <thread>
 
 #include <windows.h>
 #include <commdlg.h>
 
-#include "core/log.h"
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
-#include "player/media_player.h"
-#include "render/d3d11_renderer.h"
 #include "ui/control_panel.h"
 #include "ui/host_window.h"
 #include "ui/playback_controller.h"
@@ -20,14 +17,13 @@
 namespace {
 
 me::HostWindow g_window;
-me::D3D11Renderer g_renderer;
-me::MediaPlayer g_player;
-me::PlaybackController g_controller(&g_player);
 me::ControlPanel g_panel;
+me::PlaybackController g_controller(nullptr);
 bool g_show_panel = true;
 std::atomic<bool> g_open_requested{false};
 std::atomic<bool> g_open_prefer_hw{false};
 std::atomic<bool> g_wallpaper_requested{false};
+ME_Player* g_engine = nullptr;  // media_engine.dll 引擎实例
 
 std::string utf8_from_wide(const std::wstring& wide) {
     if (wide.empty()) return {};
@@ -42,7 +38,7 @@ std::string utf8_from_wide(const std::wstring& wide) {
 void open_media(const std::wstring& path, bool prefer_hw) {
     me::Error err = g_controller.open(utf8_from_wide(path), prefer_hw);
     if (!err.ok()) {
-        std::fprintf(stderr, "打开失败: %s\\n", err.message().c_str());
+        std::fprintf(stderr, "打开失败: %s\n", err.message().c_str());
         g_panel.set_open_error(err.message());
     } else {
         g_panel.set_open_error({});
@@ -63,12 +59,36 @@ void maybe_schedule_reopen(const std::wstring& path, bool prefer_hw, double afte
 void toggle_wallpaper() {
     if (g_window.wallpaper_mode()) {
         g_window.exit_wallpaper_mode();
-        std::fprintf(stderr, "[wallpaper] 退出壁纸模式\\n");
+        std::fprintf(stderr, "[wallpaper] 退出壁纸模式\n");
     } else if (g_window.enter_wallpaper_mode()) {
-        std::fprintf(stderr, "[wallpaper] 进入壁纸模式（Ctrl+Alt+W 退出）\\n");
+        std::fprintf(stderr, "[wallpaper] 进入壁纸模式（Ctrl+Alt+W 退出）\n");
     } else {
-        std::fprintf(stderr, "[wallpaper] 进入壁纸模式失败（找不到 WorkerW）\\n");
+        std::fprintf(stderr, "[wallpaper] 进入壁纸模式失败（找不到 WorkerW）\n");
     }
+}
+
+// 引擎渲染线程每帧回调：叠加 ImGui 控制面板（Present 由引擎在回调后执行）
+void present_callback(void*) {
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(static_cast<float>(g_window.mouse_x()),
+                         static_cast<float>(g_window.mouse_y()));
+    io.AddMouseButtonEvent(0, g_window.left_button_down());
+    io.AddMouseWheelEvent(0.0f, static_cast<float>(g_window.take_mouse_wheel()));
+
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+
+    me::PanelRequest requests;
+    g_panel.draw(g_controller, requests, &g_show_panel);
+    g_open_prefer_hw.store(requests.prefer_hw);  // 勾选/取消后立即生效：拖入新文件也用这个值
+    if (requests.wallpaper_toggle) g_wallpaper_requested.store(true);
+    if (requests.open_file) {
+        g_open_requested.store(true);
+    }
+
+    ImGui::Render();
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
 
 }  // namespace
@@ -76,9 +96,9 @@ void toggle_wallpaper() {
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);  // 让中文日志在控制台正确显示
     SetConsoleCP(CP_UTF8);
-    me::Log::set_level(me::LogLevel::Info);
+    me_set_log_level(1);  // Info
     for (int i = 1; i < argc; ++i) {
-        if (std::wstring(argv[i]) == L"--debug") me::Log::set_level(me::LogLevel::Debug);
+        if (std::wstring(argv[i]) == L"--debug") me_set_log_level(0);  // Debug
     }
     std::printf("MediaEngine v0.1\n");
 
@@ -98,22 +118,20 @@ int wmain(int argc, wchar_t** argv) {
             default: break;
         }
     });
-    g_window.set_resize_callback([](int w, int h) { g_renderer.set_pending_size(w, h); });
-
-    // 全局热键：Ctrl+Alt+W 切换壁纸模式（进入壁纸后窗口点击穿透，只能用热键退出）
-    RegisterHotKey(nullptr, 1, MOD_CONTROL | MOD_ALT, 'W');
+    g_window.set_resize_callback([](int w, int h) { me_resize(g_engine, w, h); });
 
     if (!g_window.create(L"MediaEngine — 学习型媒体引擎", 1280, 720)) {
         std::fprintf(stderr, "创建窗口失败\n");
         return 1;
     }
 
-    me::Error rerr = g_renderer.init(g_window.handle(), 1280, 720);
-    if (!rerr.ok()) {
-        std::fprintf(stderr, "渲染器初始化失败: %s\n", rerr.message().c_str());
-        return 1;
+    // 引擎（media_engine.dll）持有渲染器与播放器
+    g_engine = me_create_player(g_window.handle(), 1280, 720);
+    g_controller.set_player(g_engine);
+    if (g_engine) {
+        const char* err = me_last_error(g_engine);
+        if (err && *err) std::fprintf(stderr, "引擎初始化: %s\n", err);
     }
-    g_player.set_renderer(&g_renderer);
 
     // ImGui 初始化（此后所有 ImGui 调用都发生在渲染线程）
     IMGUI_CHECKVERSION();
@@ -124,35 +142,16 @@ int wmain(int argc, wchar_t** argv) {
     io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc", 18.0f,
                                  &font_cfg, io.Fonts->GetGlyphRangesChineseFull());
     ImGui_ImplWin32_Init(g_window.handle());
-    ImGui_ImplDX11_Init(g_renderer.device(), g_renderer.context());
+    ImGui_ImplDX11_Init(static_cast<ID3D11Device*>(me_get_d3d11_device(g_engine)),
+                        static_cast<ID3D11DeviceContext*>(me_get_d3d11_context(g_engine)));
 
-    // 渲染线程每帧调用：画控制面板 + Present
-    g_player.set_present_hook([] {
-        ImGuiIO& io = ImGui::GetIO();
-        io.AddMousePosEvent(static_cast<float>(g_window.mouse_x()),
-                             static_cast<float>(g_window.mouse_y()));
-        io.AddMouseButtonEvent(0, g_window.left_button_down());
-        io.AddMouseWheelEvent(0.0f, static_cast<float>(g_window.take_mouse_wheel()));
+    // 渲染线程每帧：引擎画视频帧后回调 present_callback 叠加面板，再 Present
+    me_set_present_callback(g_engine, &present_callback, nullptr);
 
-        ImGui_ImplDX11_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
+    // 全局热键：Ctrl+Alt+W 切换壁纸模式（进入壁纸后窗口点击穿透，只能用热键退出）
+    RegisterHotKey(nullptr, 1, MOD_CONTROL | MOD_ALT, 'W');
 
-        me::PanelRequest requests;
-        g_panel.draw(g_controller, requests, &g_show_panel);  // 绘制控制面板（必须保留！）
-        g_open_prefer_hw.store(requests.prefer_hw);  // 勾选/取消后立即生效：拖入新文件也用这个值
-        if (requests.wallpaper_toggle) g_wallpaper_requested.store(true);
-        if (requests.open_file) {
-            g_open_requested.store(true);
-
-        }
-
-        ImGui::Render();
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-        g_renderer.present_swapchain();
-    });
-
-    // 命令行传入文件则直接打开；--hw 表示优先硬解，--reopen N 用于回归测试
+    // 命令行参数
     bool prefer_hw_cli = false;
     double reopen_after = -1.0;
     double seek_after_seconds = -1.0;
@@ -166,14 +165,14 @@ int wmain(int argc, wchar_t** argv) {
         if (std::wstring(argv[i]) == L"--seek" && i + 1 < argc) {
             seek_after_seconds = _wtof(argv[i + 1]);
         }
+        if (std::wstring(argv[i]) == L"--reopen" && i + 1 < argc) {
+            reopen_after = _wtof(argv[i + 1]);
+        }
         if (std::wstring(argv[i]) == L"--eof-seek" && i + 1 < argc) {
             eof_seek_target = _wtof(argv[i + 1]);
         }
         if (std::wstring(argv[i]) == L"--speed" && i + 1 < argc) {
             speed_test = _wtof(argv[i + 1]);
-        }
-        if (std::wstring(argv[i]) == L"--wallpaper") {
-            wallpaper_test = true;
         }
         if (std::wstring(argv[i]) == L"--pause-test") {
             pause_test = true;
@@ -181,8 +180,8 @@ int wmain(int argc, wchar_t** argv) {
         if (std::wstring(argv[i]) == L"--device" && i + 1 < argc) {
             device_test = _wtoi(argv[i + 1]);
         }
-        if (std::wstring(argv[i]) == L"--reopen" && i + 1 < argc) {
-            reopen_after = _wtof(argv[i + 1]);
+        if (std::wstring(argv[i]) == L"--wallpaper") {
+            wallpaper_test = true;
         }
     }
     std::wstring first_media;
@@ -192,18 +191,11 @@ int wmain(int argc, wchar_t** argv) {
             ++i;  // 跳过带值的参数
             continue;
         }
-        if (arg == L"--wallpaper") {
-            continue;
-        }
-        if (arg == L"--pause-test") {
+        if (arg == L"--pause-test" || arg == L"--wallpaper") {
             continue;
         }
         if (arg == L"--reopen" && i + 1 < argc) {
             ++i;  // 跳过 --reopen 的值，避免被当成媒体路径
-            continue;
-        }
-        if (arg == L"--seek" && i + 1 < argc) {
-            ++i;  // 跳过 --seek 的值
             continue;
         }
         if (arg != L"--hw" && arg != L"--debug") {
@@ -213,16 +205,17 @@ int wmain(int argc, wchar_t** argv) {
         }
     }
     maybe_schedule_reopen(first_media, prefer_hw_cli, reopen_after);
+
     if (seek_after_seconds > 0.0) {
         std::thread([target = seek_after_seconds] {
             std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-            std::fprintf(stderr, "[seek-test] 跳转到 %.1fs\\n", target);
+            std::fprintf(stderr, "[seek-test] 跳转到 %.1fs\n", target);
             g_controller.seek(target);
             std::this_thread::sleep_for(std::chrono::milliseconds(400));
-            std::fprintf(stderr, "[seek-test] 快速拖回 %.1fs\\n", target * 0.6);
+            std::fprintf(stderr, "[seek-test] 快速拖回 %.1fs\n", target * 0.6);
             g_controller.seek(target * 0.6);
             std::this_thread::sleep_for(std::chrono::milliseconds(400));
-            std::fprintf(stderr, "[seek-test] 再拖到 %.1fs\\n", target * 0.8);
+            std::fprintf(stderr, "[seek-test] 再拖到 %.1fs\n", target * 0.8);
             g_controller.seek(target * 0.8);
         }).detach();
     }
@@ -234,7 +227,7 @@ int wmain(int argc, wchar_t** argv) {
                 if (g_controller.ended()) break;
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }
-            std::fprintf(stderr, "[eof-seek] EOF 后跳转到 %.1fs\\n", target);
+            std::fprintf(stderr, "[eof-seek] EOF 后跳转到 %.1fs\n", target);
             g_controller.seek(target);
         }).detach();
     }
@@ -244,13 +237,31 @@ int wmain(int argc, wchar_t** argv) {
             const double sweep[] = {1.0, 1.5, 2.0, 2.5, 3.0, 2.5, 2.0, 1.5, 1.0, 0.75, 0.5, 0.75, 1.0};
             std::this_thread::sleep_for(std::chrono::milliseconds(3000));
             for (double s : sweep) {
-                std::fprintf(stderr, "[speed-test] 变速到 %.2fx\\n", s);
+                std::fprintf(stderr, "[speed-test] 变速到 %.2fx\n", s);
                 g_controller.set_speed(s);
                 std::this_thread::sleep_for(std::chrono::milliseconds(150));
             }
-            std::fprintf(stderr, "[speed-test] 拖动结束，保持 %.2fx\\n", rate);
+            std::fprintf(stderr, "[speed-test] 拖动结束，保持 %.2fx\n", rate);
             g_controller.set_speed(rate);
             std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+        }).detach();
+    }
+    if (pause_test) {
+        std::thread([] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(4000));
+            std::fprintf(stderr, "[pause-test] 暂停\n");
+            g_controller.pause();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            std::fprintf(stderr, "[pause-test] 恢复\n");
+            g_controller.play();
+        }).detach();
+    }
+    if (device_test >= 0) {
+        std::thread([idx = device_test] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+            std::fprintf(stderr, "[device-test] 切换设备 #%d\n", idx);
+            me::Error err = g_controller.set_audio_device(idx);
+            std::fprintf(stderr, "[device-test] 切换结果: %s\n", err.ok() ? "OK" : err.message().c_str());
         }).detach();
     }
     if (wallpaper_test) {
@@ -261,24 +272,6 @@ int wmain(int argc, wchar_t** argv) {
             toggle_wallpaper();
         }).detach();
     }
-    if (pause_test) {
-        std::thread([] {
-            std::this_thread::sleep_for(std::chrono::milliseconds(4000));
-            std::fprintf(stderr, "[pause-test] 暂停\\n");
-            g_controller.pause();
-            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-            std::fprintf(stderr, "[pause-test] 恢复\\n");
-            g_controller.play();
-        }).detach();
-    }
-    if (device_test >= 0) {
-        std::thread([idx = device_test] {
-            std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-            std::fprintf(stderr, "[device-test] 切换设备 #%d\\n", idx);
-            me::Error err = g_controller.set_audio_device(idx);
-            std::fprintf(stderr, "[device-test] 切换结果: %s\\n", err.ok() ? "OK" : err.message().c_str());
-        }).detach();
-    }
 
     // 主线程：消息循环 + 处理"打开文件"请求（对话框必须在主线程）
     for (;;) {
@@ -286,11 +279,11 @@ int wmain(int argc, wchar_t** argv) {
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_HOTKEY && msg.wParam == 1) { toggle_wallpaper(); continue; }
             if (msg.message == WM_QUIT) {
-                g_player.close();
                 ImGui_ImplDX11_Shutdown();
                 ImGui_ImplWin32_Shutdown();
                 ImGui::DestroyContext();
-                g_renderer.shutdown();
+                me_destroy_player(g_engine);
+                g_engine = nullptr;
                 g_window.destroy();
                 return static_cast<int>(msg.wParam);
             }

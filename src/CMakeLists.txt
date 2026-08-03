@@ -56,15 +56,17 @@ target_include_directories(media_engine_core PUBLIC ${FFMPEG_ROOT}/include)
 target_link_libraries(media_engine_core PUBLIC avcodec avformat avutil swresample swscale)
 
 # ---- 完整引擎：core + media + sync + audio + render + player ----
-add_library(media_engine STATIC
+add_library(media_engine SHARED
     sync/sync_engine.cpp
     audio/audio_resampler.cpp
     audio/audio_output.cpp
     render/d3d11_renderer.cpp
     player/media_player.cpp
+    api/me_api.cpp
 )
+target_compile_definitions(media_engine PRIVATE ME_ENGINE_DLL_BUILD)
 target_include_directories(media_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(media_engine PUBLIC media_engine_core d3d11 dxgi d3dcompiler ole32 uuid mmdevapi)
+target_link_libraries(media_engine PRIVATE media_engine_core d3d11 dxgi d3dcompiler ole32 uuid mmdevapi)
 
 # ---- 应用：Win32 宿主窗口 + ImGui 控制面板 ----
 add_executable(media_player_app
