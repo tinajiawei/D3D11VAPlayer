@@ -6,3 +6,4 @@
 media_engine_imgui.ini
 *.log
 .vs/
+*.obj
