@@ -8,6 +8,7 @@
 
 #include "player/media_player.h"
 #include "api/renderer_plugin.h"
+#include "api/audio_plugin.h"
 #include "render/headless_renderer.h"
 #include "audio/null_audio_sink.h"
 #include "core/clock.h"
@@ -59,6 +60,46 @@ void renderer_plugin_destroy(void* renderer) {
     RendererPluginApi& api = renderer_plugin_api();
     if (api.module && api.destroy) api.destroy(renderer);
 }
+
+using AudioCreateFn = void* (*)(int, char*, int);
+using AudioDestroyFn = void (*)(void*);
+
+struct AudioPluginApi {
+    HMODULE module = nullptr;
+    AudioCreateFn create = nullptr;
+    AudioDestroyFn destroy = nullptr;
+};
+
+AudioPluginApi& audio_plugin_api() {
+    static AudioPluginApi api = [] {
+        AudioPluginApi a;
+        wchar_t path[MAX_PATH] = {};
+        if (GetModuleFileNameW(nullptr, path, MAX_PATH)) {
+            wchar_t* slash = wcsrchr(path, static_cast<wchar_t>(92));
+            if (slash) *slash = 0;
+            wcscat_s(path, L"\\plugin\\2\\audio.dll");
+            a.module = LoadLibraryW(path);
+            if (a.module) {
+                a.create = reinterpret_cast<AudioCreateFn>(
+                    GetProcAddress(a.module, "me_audio_create"));
+                a.destroy = reinterpret_cast<AudioDestroyFn>(
+                    GetProcAddress(a.module, "me_audio_destroy"));
+                if (!a.create || !a.destroy) {
+                    FreeLibrary(a.module);
+                    a.module = nullptr;
+                }
+            }
+        }
+        return a;
+    }();
+    return api;
+}
+
+void* audio_plugin_create(int type, char* errbuf, int errbuf_size) {
+    AudioPluginApi& api = audio_plugin_api();
+    if (!api.module || !api.create) return nullptr;
+    return api.create(type, errbuf, errbuf_size);
+}
 }  // namespace
 
 // ME_Player 是 C API 的全局不透明类型：内部持有引擎对象
@@ -102,6 +143,22 @@ ME_API ME_Player* me_create_player_ex(void* hwnd, int width, int height, int fla
     }
     if (null_audio) {
         p->player.set_audio_sink(std::make_unique<me::NullAudioSink>());
+    } else {
+        char errbuf[256] = {};
+        void* s = audio_plugin_create(ME_AUDIO_TYPE_WASAPI, errbuf,
+                                    static_cast<int>(sizeof(errbuf)));
+        if (s) {
+            p->player.set_audio_sink(
+                std::unique_ptr<me::IAudioSink>(static_cast<me::IAudioSink*>(s)));
+        } else {
+            // 音频是软依赖：插件缺失时回退空输出桩（无声），播放与同步不受影响
+            p->player.set_audio_sink(std::make_unique<me::NullAudioSink>());
+            const std::string msg = errbuf[0]
+                ? ("音频插件创建失败（已回退无声）: " + std::string(errbuf))
+                : "音频插件加载失败（已回退无声）: plugin\\2\\audio.dll";
+            p->last_error = msg;
+            ME_LOG_WARN(msg);
+        }
     }
     p->player.set_renderer(p->renderer.get());
     p->player.set_present_hook([p] {

@@ -6,12 +6,14 @@
 
 #include "core/clock.h"
 #include "core/log.h"
-#include "audio/audio_output.h"
+#include "audio/null_audio_sink.h"
 #include "sync/sync_engine.h"
 
 namespace me {
 
-MediaPlayer::MediaPlayer() : sync_(std::make_unique<SyncEngine>()), audio_(std::make_unique<AudioOutput>()) {}
+// 默认用 NullAudioSink 桩：引擎自包含可运行（无声但同步时钟可用）；
+// 真实后端（WASAPI）由 C API 通过 set_audio_sink 注入（plugin\2\audio.dll）
+MediaPlayer::MediaPlayer() : sync_(std::make_unique<SyncEngine>()), audio_(std::make_unique<NullAudioSink>()) {}
 void MediaPlayer::set_audio_sink(std::unique_ptr<IAudioSink> sink) {
     if (sink) audio_ = std::move(sink);
 }

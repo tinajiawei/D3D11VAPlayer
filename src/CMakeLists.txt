@@ -68,6 +68,20 @@ target_link_libraries(renderer_plugin PRIVATE d3d11 dxgi d3dcompiler avutil swsc
 set_target_properties(renderer_plugin PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:media_player_app>/plugin/2"
     OUTPUT_NAME "renderer")
+
+# ---- 音频输出插件 DLL（plugin\2\，WASAPI 后端从引擎拆出；docs/11 M3）----
+add_library(audio_plugin SHARED
+    plugins/audio_plugin.cpp
+    audio/audio_output.cpp
+    core/clock.cpp
+    core/log.cpp
+)
+target_compile_definitions(audio_plugin PRIVATE ME_AUDIO_PLUGIN_BUILD)
+target_include_directories(audio_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(audio_plugin PRIVATE mmdevapi ole32 uuid)
+set_target_properties(audio_plugin PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:media_player_app>/plugin/2"
+    OUTPUT_NAME "audio")
 target_include_directories(media_engine_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_directories(media_engine_core PUBLIC ${FFMPEG_ROOT}/lib)
 target_include_directories(media_engine_core PUBLIC ${FFMPEG_ROOT}/include)
@@ -77,13 +91,12 @@ target_link_libraries(media_engine_core PUBLIC avcodec avformat avutil swresampl
 add_library(media_engine SHARED
     sync/sync_engine.cpp
     audio/audio_resampler.cpp
-    audio/audio_output.cpp
     player/media_player.cpp
     api/me_api.cpp
 )
 target_compile_definitions(media_engine PRIVATE ME_ENGINE_DLL_BUILD)
 target_include_directories(media_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(media_engine PRIVATE media_engine_core ole32 uuid mmdevapi)
+target_link_libraries(media_engine PRIVATE media_engine_core ole32 uuid)
 
 # ---- 应用：Win32 宿主窗口 + ImGui 控制面板 ----
 add_executable(media_player_app
