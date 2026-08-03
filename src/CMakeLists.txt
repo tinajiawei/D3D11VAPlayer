@@ -21,10 +21,35 @@ add_library(media_engine_core STATIC
     media/packet_queue.cpp
     media/frame_queue.cpp
     media/media_source.cpp
-    media/sw_decoder.cpp
-    media/d3d11va_decoder.cpp
     media/decoder_factory.cpp
 )
+
+# ---- 解码器插件 DLL（输出到 exe 旁 plugin\1\，参考 RDCodec plugin 目录模式） ----
+add_library(decoder_sw SHARED
+    media/sw_decoder.cpp
+    media/plugin_sw.cpp
+    core/av_utils.cpp
+    core/log.cpp
+)
+target_compile_definitions(decoder_sw PRIVATE ME_DECODER_PLUGIN_BUILD)
+target_include_directories(decoder_sw PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_directories(decoder_sw PRIVATE ${FFMPEG_ROOT}/lib)
+target_include_directories(decoder_sw PRIVATE ${FFMPEG_ROOT}/include)
+target_link_libraries(decoder_sw PRIVATE avcodec avutil)
+set_target_properties(decoder_sw PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:media_player_app>/plugin/1")
+
+add_library(decoder_d3d11va SHARED
+    media/d3d11va_decoder.cpp
+    media/plugin_d3d11va.cpp
+    core/av_utils.cpp
+    core/log.cpp
+)
+target_compile_definitions(decoder_d3d11va PRIVATE ME_DECODER_PLUGIN_BUILD)
+target_include_directories(decoder_d3d11va PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_directories(decoder_d3d11va PRIVATE ${FFMPEG_ROOT}/lib)
+target_include_directories(decoder_d3d11va PRIVATE ${FFMPEG_ROOT}/include)
+target_link_libraries(decoder_d3d11va PRIVATE avcodec avutil)
+set_target_properties(decoder_d3d11va PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:media_player_app>/plugin/1")
 target_include_directories(media_engine_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_directories(media_engine_core PUBLIC ${FFMPEG_ROOT}/lib)
 target_include_directories(media_engine_core PUBLIC ${FFMPEG_ROOT}/include)

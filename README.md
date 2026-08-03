@@ -6,6 +6,7 @@
 
 - 解封装：mp4 / mkv / mov / ts / flv / webm / avi / wav / mp3（FFmpeg demuxer）
 - 解码：H.264 / HEVC（D3D11VA 硬解已激活）+ AV1（软解）；失败自动降级软解；AAC / MP3 / PCM / FLAC / Opus
+- 解码器插件化：后端是 `plugin\1\` 下的插件 DLL（decoder_sw / decoder_d3d11va），新增后端 = 新增一个 DLL
 - 图片/GIF：PNG / JPEG / GIF / WebP 走同一条解码管线，动画由 pts 驱动
 - 渲染：D3D11 flip-model 交换链 + 像素着色器做 YUV→RGB（支持 YUV420P / NV12）
 - 音频：WASAPI 共享模式事件驱动输出、libswresample 重采样、音量控制、变速

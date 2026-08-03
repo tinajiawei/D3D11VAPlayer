@@ -1,10 +1,12 @@
 #include "media/decoder_factory.h"
 
+#include <mutex>
 #include <vector>
 
+#include <windows.h>
+
 #include "core/log.h"
-#include "media/d3d11va_decoder.h"
-#include "media/sw_decoder.h"
+#include "media/decoder_plugin.h"
 
 namespace me {
 
@@ -12,7 +14,7 @@ namespace {
 
 struct Backend {
     std::string name;
-    DecoderFactory::Creator creator;
+    IDecoder* (*creator)();
 };
 
 std::vector<Backend>& backends() {
@@ -20,55 +22,111 @@ std::vector<Backend>& backends() {
     return registry;
 }
 
-// 注册软解（永远兜底）
-struct SwRegistrar {
-    SwRegistrar() { DecoderFactory::register_backend("sw", [] { return std::make_unique<SwDecoder>(); }); }
-};
-SwRegistrar g_sw_registrar;
-
-// 注册 D3D11VA 硬解（插拔式：以后 AMF/QSV/NVDEC 同样加一行）
-struct HwRegistrar {
-    HwRegistrar() {
-        DecoderFactory::register_backend("d3d11va", [] { return std::make_unique<D3D11vaDecoder>(); });
-    }
-};
-HwRegistrar g_hw_registrar;
-
-}  // namespace
-
-void DecoderFactory::register_backend(std::string_view name, Creator creator) {
-    backends().push_back(Backend{std::string(name), std::move(creator)});
+std::string to_utf8(const std::wstring& w) {
+    if (w.empty()) return {};
+    const int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string s(len > 0 ? len - 1 : 0, '\0');
+    if (len > 0) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), len, nullptr, nullptr);
+    return s;
 }
 
-std::unique_ptr<IDecoder> DecoderFactory::create(const AVCodecParameters& params, bool prefer_hw) {
-    // 硬解优先：尝试所有注册的硬件后端
-    if (prefer_hw) {
-        for (auto& backend : backends()) {
-            auto decoder = backend.creator();
-            if (!decoder->is_hardware()) continue;
-            Error err = decoder->open(params);
-            if (err.ok()) {
-                ME_LOG_INFO("解码器选择: ", backend.name);
-                return decoder;
-            }
-            ME_LOG_WARN("硬解后端 ", backend.name, " 打开失败: ", err.message(), "，尝试下一个");
-        }
+void registry_add(const char* name, IDecoder* (*creator)()) {
+    if (name && creator) {
+        backends().push_back(Backend{std::string(name), creator});
     }
-    // 软解兜底：尝试所有注册的软件后端
-    for (auto& backend : backends()) {
-        auto decoder = backend.creator();
-        if (decoder->is_hardware()) continue;
-        Error err = decoder->open(params);
-        if (err.ok()) {
-            ME_LOG_INFO("解码器选择: ", backend.name);
-            return decoder;
+}
+
+void load_plugins_impl() {
+    // 插件目录：exe 旁的 plugin\1\（版本号=接口版本，升接口时换目录，旧插件不加载）
+    wchar_t exe_path[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, exe_path, MAX_PATH) == 0) {
+        ME_LOG_WARN("[decoder] 获取 exe 路径失败，跳过插件加载");
+        return;
+    }
+    std::wstring dir(exe_path);
+    const size_t pos = dir.find_last_of(L"\\/");
+    dir = (pos == std::wstring::npos) ? L"" : dir.substr(0, pos + 1);
+    dir += L"plugin\\1\\";
+
+    WIN32_FIND_DATAW fd = {};
+    const HANDLE hfind = FindFirstFileW((dir + L"*.dll").c_str(), &fd);
+    if (hfind == INVALID_HANDLE_VALUE) {
+        ME_LOG_WARN("[decoder] 未找到解码器插件目录: ", to_utf8(dir));
+        return;
+    }
+    do {
+        const std::wstring path = dir + fd.cFileName;
+        // 指定搜索 DLL 自身目录 + 默认目录（FFmpeg DLL 在 exe 旁，可被找到）
+        const HMODULE mod = LoadLibraryExW(
+            path.c_str(), nullptr,
+            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+        if (!mod) {
+            ME_LOG_WARN("[decoder] 插件加载失败: ", to_utf8(fd.cFileName), " err=", GetLastError());
+            continue;
         }
-        ME_LOG_WARN("软解后端 ", backend.name, " 打开失败: ", err.message());
+        auto reg = reinterpret_cast<void (*)(DecoderRegistry*)>(
+            GetProcAddress(mod, "me_register_decoders"));
+        if (!reg) {
+            FreeLibrary(mod);
+            ME_LOG_WARN("[decoder] 插件缺少 me_register_decoders: ", to_utf8(fd.cFileName));
+            continue;
+        }
+        DecoderRegistry registry{&registry_add};
+        reg(&registry);
+        ME_LOG_INFO("[decoder] 已加载插件: ", to_utf8(fd.cFileName));
+        // 不保存 HMODULE：进程生命周期内不卸载，便于后续做热重载（需额外线程安全处理）
+    } while (FindNextFileW(hfind, &fd));
+    FindClose(hfind);
+}
+
+void load_plugins_once() {
+    static std::once_flag flag;
+    std::call_once(flag, load_plugins_impl);
+}
+
+std::unique_ptr<IDecoder> open_named(const std::string& name, const AVCodecParameters& params) {
+    for (auto& backend : backends()) {
+        if (backend.name != name) continue;
+        std::unique_ptr<IDecoder> decoder(backend.creator());
+        if (!decoder) return nullptr;
+        Error err = decoder->open(params);
+        if (err.ok()) return decoder;
+        ME_LOG_WARN("[decoder] 后端 ", backend.name, " 初始化失败: ", err.message());
+        return nullptr;
     }
     return nullptr;
 }
 
+}  // namespace
+
+void DecoderFactory::register_backend(std::string_view name, Creator creator) {
+    backends().push_back(Backend{std::string(name), creator});
+}
+
+std::unique_ptr<IDecoder> DecoderFactory::create(const AVCodecParameters& params, bool prefer_hw) {
+    load_plugins_once();
+
+    // 硬解优先：尝试所有注册的硬件后端
+    if (prefer_hw) {
+        auto decoder = open_named("d3d11va", params);
+        if (decoder) {
+            ME_LOG_INFO("解码器选择: ", decoder->name());
+            return decoder;
+        }
+        ME_LOG_WARN("硬解后端 d3d11va 初始化失败，尝试下一个");
+    }
+    // 软解兜底
+    auto decoder = open_named("sw", params);
+    if (decoder) {
+        ME_LOG_INFO("解码器选择: ", decoder->name());
+        return decoder;
+    }
+    ME_LOG_ERROR("没有可用的解码器插件（plugin\\1\\*.dll）");
+    return nullptr;
+}
+
 std::string DecoderFactory::available_backends() {
+    load_plugins_once();
     std::string result;
     for (auto& backend : backends()) {
         if (!result.empty()) result += ", ";

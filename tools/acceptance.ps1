@@ -33,7 +33,7 @@ function Run-Case {
         Name = $Name
         Alive = $alive
         PlayStart = ([regex]::Matches($txt, '播放开始')).Count
-        OpenFail = ([regex]::Matches($txt, '打开失败')).Count - ([regex]::Matches($txt, '硬解后端')).Count
+        OpenFail = [Math]::Max(0, ([regex]::Matches($txt, '打开失败')).Count - ([regex]::Matches($txt, '硬解后端')).Count)
         DecodeFail = ([regex]::Matches($txt, '解码失败')).Count
         ReadFail = ([regex]::Matches($txt, '读包失败')).Count
         AudioResetFail = ([regex]::Matches($txt, '连续写入失败')).Count
