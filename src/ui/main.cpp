@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <mutex>
@@ -15,6 +17,8 @@
 #include "ui/floating_panel.h"
 #include "ui/tray_icon.h"
 #include "web/webview_wallpaper.h"
+#include "capture/capture_preview.h"
+#include "capture/loopback_capture.h"
 #include "ui/host_window.h"
 #include "ui/playback_controller.h"
 
@@ -28,12 +32,14 @@ me::WebViewWallpaper g_web_wallpaper;
 std::mutex g_request_mutex;
 bool g_web_wallpaper_toggle_request = false;
 std::string g_web_wallpaper_url;
+me::CapturePreview g_capture_preview;
 me::PlaybackController g_controller(nullptr);
 bool g_show_panel = true;
 std::atomic<bool> g_open_requested{false};
 std::atomic<bool> g_open_prefer_hw{false};
 std::atomic<bool> g_wallpaper_requested{false};
-bool g_headless_cli = false;   // --headless 无头模式（HeadlessRenderer + NullAudioSink）
+bool g_headless_cli = false;
+bool g_wallpaper_keep = false;   // --headless 无头模式（HeadlessRenderer + NullAudioSink）
 double g_run_seconds = 8.0;    // --run-seconds 无头运行结束时间
 ME_Player* g_engine = nullptr;  // media_engine.dll 引擎实例
 
@@ -91,6 +97,7 @@ void toggle_wallpaper() {
 void toggle_web_wallpaper(const std::string& url) {
     if (g_web_wallpaper.active()) {
         g_web_wallpaper.destroy();
+                g_capture_preview.stop();
         std::fprintf(stderr, "[webwallpaper] 退出网页壁纸\n");
         return;
     }
@@ -138,22 +145,98 @@ void present_callback(void*) {
         g_web_wallpaper_url = requests.web_url;
     }
 
+    g_capture_preview.draw(io.DisplaySize.x, io.DisplaySize.y);
+
     ImGui::Render();
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
 
 }  // namespace
 
+void write_wav_16(const std::string& path, const std::vector<float>& samples, int rate, int ch) {
+    FILE* f = nullptr;
+    fopen_s(&f, path.c_str(), "wb");
+    if (!f) return;
+    const uint32_t data_bytes = static_cast<uint32_t>(samples.size()) * 2;
+    const uint32_t file_size = 44 + data_bytes;
+    fwrite("RIFF", 1, 4, f);
+    const uint32_t riff_size = file_size - 8;
+    fwrite(&riff_size, 4, 1, f);
+    fwrite("WAVE", 1, 4, f);
+    fwrite("fmt ", 1, 4, f);
+    const uint32_t fmt_size = 16;
+    fwrite(&fmt_size, 4, 1, f);
+    const uint16_t audio_fmt = 1;
+    fwrite(&audio_fmt, 2, 1, f);
+    const uint16_t channels = static_cast<uint16_t>(ch);
+    fwrite(&channels, 2, 1, f);
+    const uint32_t sample_rate = static_cast<uint32_t>(rate);
+    fwrite(&sample_rate, 4, 1, f);
+    const uint32_t byte_rate = sample_rate * channels * 2;
+    fwrite(&byte_rate, 4, 1, f);
+    const uint16_t block_align = static_cast<uint16_t>(channels * 2);
+    fwrite(&block_align, 2, 1, f);
+    const uint16_t bits = 16;
+    fwrite(&bits, 2, 1, f);
+    fwrite("data", 1, 4, f);
+    fwrite(&data_bytes, 4, 1, f);
+    for (float s : samples) {
+        const int16_t v = static_cast<int16_t>(std::clamp(s, -1.0f, 1.0f) * 32767.0f);
+        fwrite(&v, 2, 1, f);
+    }
+    fclose(f);
+}
+
+int run_capture_audio(double seconds) {
+    me::LoopbackCapture cap;
+    if (!cap.open()) {
+        std::fprintf(stderr, "[loopcap] 打开采集失败\n");
+        return 1;
+    }
+    cap.start();
+    std::vector<float> all;
+    const auto begin = std::chrono::steady_clock::now();
+    while (std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count() < seconds) {
+        std::vector<float> chunk = cap.take_samples();
+        all.insert(all.end(), chunk.begin(), chunk.end());
+        Sleep(50);
+    }
+    cap.stop();
+    std::vector<float> tail = cap.take_samples();
+    all.insert(all.end(), tail.begin(), tail.end());
+    double rms = 0.0;
+    for (float s : all) rms += static_cast<double>(s) * s;
+    rms = all.empty() ? 0.0 : std::sqrt(rms / static_cast<double>(all.size()));
+    write_wav_16("capture_loopback.wav", all, cap.sample_rate(), cap.channels());
+    std::fprintf(stderr, "[loopcap] 采集 %.1fs: %zu 采样, RMS=%.4f, 已写 capture_loopback.wav\n",
+                seconds, all.size(), rms);
+    return 0;
+}
+
+LONG WINAPI crash_handler(EXCEPTION_POINTERS* ep) {
+    std::fprintf(stderr, "[crash] 未处理异常: 0x%08X at 0x%p\n",
+                static_cast<unsigned>(ep->ExceptionRecord->ExceptionCode),
+                ep->ExceptionRecord->ExceptionAddress);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 int wmain(int argc, wchar_t** argv) {
+    SetUnhandledExceptionFilter(&crash_handler);
     SetConsoleOutputCP(CP_UTF8);  // 让中文日志在控制台正确显示
     SetConsoleCP(CP_UTF8);
     me_set_log_level(1);  // Info
     for (int i = 1; i < argc; ++i) {
         if (std::wstring(argv[i]) == L"--debug") me_set_log_level(0);  // Debug
     }
+    double capture_audio_seconds = -1.0;
+    double capture_screen_seconds = -1.0;
     for (int i = 1; i < argc; ++i) {
         if (std::wstring(argv[i]) == L"--headless") g_headless_cli = true;
+        if (std::wstring(argv[i]) == L"--wallpaper-keep") g_wallpaper_keep = true;
+        if (std::wstring(argv[i]) == L"--capture-audio" && i + 1 < argc) capture_audio_seconds = _wtof(argv[i + 1]);
+        if (std::wstring(argv[i]) == L"--capture-screen" && i + 1 < argc) capture_screen_seconds = _wtof(argv[i + 1]);
     }
+    if (capture_audio_seconds > 0.0) return run_capture_audio(capture_audio_seconds);
     std::printf("MediaEngine v0.1\n");
 
     g_window.set_file_drop_callback([](const std::wstring& path) {
@@ -269,11 +352,11 @@ int wmain(int argc, wchar_t** argv) {
     std::wstring first_media;
     for (int i = 1; i < argc; ++i) {
         const std::wstring arg(argv[i]);
-        if ((arg == L"--seek" || arg == L"--eof-seek" || arg == L"--speed" || arg == L"--device" || arg == L"--run-seconds" || arg == L"--web-wallpaper") && i + 1 < argc) {
+        if ((arg == L"--seek" || arg == L"--eof-seek" || arg == L"--speed" || arg == L"--device" || arg == L"--run-seconds" || arg == L"--web-wallpaper" || arg == L"--capture-audio" || arg == L"--capture-screen") && i + 1 < argc) {
             ++i;  // 跳过带值的参数
             continue;
         }
-        if (arg == L"--pause-test" || arg == L"--wallpaper" || arg == L"--headless" || arg == L"--web-wallpaper") {
+        if (arg == L"--pause-test" || arg == L"--wallpaper" || arg == L"--wallpaper-keep" || arg == L"--headless" || arg == L"--web-wallpaper" || arg == L"--capture-audio" || arg == L"--capture-screen") {
             continue;
         }
         if (arg == L"--reopen" && i + 1 < argc) {
@@ -282,7 +365,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         if (arg != L"--hw" && arg != L"--debug") {
             first_media = arg;
-            open_media(arg, prefer_hw_cli);
+            if (capture_screen_seconds <= 0.0) open_media(arg, prefer_hw_cli);
             break;
         }
     }
@@ -350,12 +433,20 @@ int wmain(int argc, wchar_t** argv) {
         std::thread([] {
             std::this_thread::sleep_for(std::chrono::milliseconds(2000));
             toggle_wallpaper();
-            std::this_thread::sleep_for(std::chrono::milliseconds(5000));
-            toggle_wallpaper();
+            if (!g_wallpaper_keep) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+                toggle_wallpaper();
+            }
         }).detach();
     }
 
     // 主线程：消息循环 + 处理"打开文件"请求（对话框必须在主线程）
+    if (capture_screen_seconds > 0.0 && !g_headless_cli) {
+        auto* cdev = static_cast<ID3D11Device*>(me_get_d3d11_device(g_engine));
+        auto* cctx = static_cast<ID3D11DeviceContext*>(me_get_d3d11_context(g_engine));
+        g_capture_preview.start(cdev, cctx, capture_screen_seconds, g_window.handle());
+    }
+
     if (!web_wallpaper_url_cli.empty() && !g_headless_cli) {
         const std::string wurl = utf8_from_wide(web_wallpaper_url_cli);
         // WebView2 控制器要求宿主窗口所在线程有消息泵：只能经主循环消费请求
@@ -366,11 +457,13 @@ int wmain(int argc, wchar_t** argv) {
                 g_web_wallpaper_toggle_request = true;
                 g_web_wallpaper_url = wurl;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(5000));
-            {
-                std::lock_guard<std::mutex> lock(g_request_mutex);
-                g_web_wallpaper_toggle_request = true;
-                g_web_wallpaper_url = wurl;
+            if (!g_wallpaper_keep) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+                {
+                    std::lock_guard<std::mutex> lock(g_request_mutex);
+                    g_web_wallpaper_toggle_request = true;
+                    g_web_wallpaper_url = wurl;
+                }
             }
         }).detach();
     }

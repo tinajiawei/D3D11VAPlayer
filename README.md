@@ -21,6 +21,8 @@
 - 模块 DLL 化（M3 完成）：渲染 plugin\2\renderer.dll + 音频 plugin\2\audio.dll + 同步 plugin\2\sync.dll；引擎按 ABI 工厂加载，渲染/同步为硬依赖（缺失明确报错），音频缺插件回退无声（NullAudioSink）
 - 网页壁纸（M4）：WebView2 渲染任意 URL 到桌面（内置 CSS 动画演示页），控制面板可切换
 - 更多硬解（M5）：AMF（AMD）插件 decoder_amf.dll，HEVC/H.264；ME_HW_BACKEND 环境变量可强制指定后端
+- 采集（M6）：WASAPI loopback 音频采集（--capture-audio 写 WAV）+ DXGI 屏幕采集（--capture-screen 实时预览）
+- 稳定性（M7）：壁纸崩溃自动恢复 watchdog + --wallpaper-keep + 崩溃异常过滤器 + 软硬解性能对比脚本
 
 ## 目录结构
 
@@ -86,6 +88,9 @@ build\src\media_player_app.exe samples\test_hevc.mp4 --hw   # 优先硬解
 | `--device <索引>` | 3s 时切换扬声器（含失败回退） |
 | `--reopen <秒>` | N 秒后重开同一文件（播放中拖入新文件） |
 | `--wallpaper` | 2s 进入壁纸模式、7s 退出（自动回归） |
+| `--wallpaper-keep` | 进入壁纸后不自动退出（watchdog 持续壁纸用） |
+| `--capture-audio <秒>` | WASAPI loopback 采集 N 秒，写 capture_loopback.wav |
+| `--capture-screen <秒>` | DXGI 屏幕采集 N 秒，窗口实时预览并保存 capture_frame.bmp |
 | `--headless` | 无头模式：HeadlessRenderer + NullAudioSink，不创建窗口 |
 | `--run-seconds <秒>` | 无头模式运行时长后自动退出（默认 8s） |
 | `--hw` | 优先 D3D11VA 硬解，失败自动降级软解 |

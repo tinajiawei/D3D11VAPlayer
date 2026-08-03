@@ -7,3 +7,5 @@ media_engine_imgui.ini
 *.log
 .vs/
 *.obj
+capture_loopback.wav
+capture_frame.bmp
