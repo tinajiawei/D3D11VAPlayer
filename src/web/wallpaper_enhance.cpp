@@ -187,6 +187,22 @@ const char* wmo_text(int code) {
     return "未知";
 }
 
+// 百度 IP 查询接口（国内域名，VPN 规则分流时走真实网络）；返回城市名
+bool baidu_ip_city(std::string& city) {
+    const std::string r = http_get(
+        "https://opendata.baidu.com/api.php?query=ip&co=&resource_id=6006&oe=utf8");
+    std::string loc = json_string(r, "location");
+    if (loc.empty() || loc.find("局域网") != std::string::npos ||
+        loc.find("内网") != std::string::npos) {
+        return false;
+    }
+    // "广东省深圳市" → "深圳市"，方便 Open-Meteo 地理编码
+    const size_t p = loc.find("省");
+    if (p != std::string::npos && p + 1 < loc.size()) loc = loc.substr(p + 1);
+    city = loc;
+    return true;
+}
+
 // Windows 系统定位（WiFi/GPS，不经过 IP，VPN 不影响）；失败返回 false
 bool windows_location(double& lat, double& lon) {
     try {
@@ -339,17 +355,34 @@ void WallpaperEnhance::weather_loop(const std::string city_utf8) {
             std::fprintf(stderr, "[enhance] 天气: 系统定位 %s (%.4f, %.4f)\n",
                          city.c_str(), lat, lon);
         } else {
-            // 2) IP 定位兜底（可能命中 VPN 出口）
-            const std::string ip = http_get("https://ipwho.is/");
-            lat = json_number(ip, "latitude");
-            lon = json_number(ip, "longitude");
-            if (lat != 0.0 && lon != 0.0) {
-                city = json_string(ip, "city");
-                if (city.empty()) city = json_string(ip, "region");
-                std::fprintf(stderr, "[enhance] 天气: IP 定位 %s (%.4f, %.4f)\n",
-                             city.c_str(), lat, lon);
-            } else {
-                std::fprintf(stderr, "[enhance] 天气: 定位失败，回退北京\n");
+            // 2) 百度 IP 定位（国内域名通常 VPN 规则直连，可拿到真实位置）
+            std::string baidu_city;
+            if (baidu_ip_city(baidu_city)) {
+                const std::string geo_url =
+                    "https://geocoding-api.open-meteo.com/v1/search?name=" +
+                    url_encode_utf8(baidu_city) + "&count=1&language=zh&format=json";
+                const std::string geo = http_get(geo_url);
+                lat = json_number(geo, "latitude");
+                lon = json_number(geo, "longitude");
+                if (lat != 0.0 && lon != 0.0) {
+                    city = baidu_city;
+                    std::fprintf(stderr, "[enhance] 天气: 百度IP定位 %s (%.4f, %.4f)\n",
+                                 city.c_str(), lat, lon);
+                }
+            }
+            if (lat == 0.0 && lon == 0.0) {
+                // 3) ipwho.is 兜底（可能命中 VPN 出口）
+                const std::string ip = http_get("https://ipwho.is/");
+                lat = json_number(ip, "latitude");
+                lon = json_number(ip, "longitude");
+                if (lat != 0.0 && lon != 0.0) {
+                    city = json_string(ip, "city");
+                    if (city.empty()) city = json_string(ip, "region");
+                    std::fprintf(stderr, "[enhance] 天气: IP 定位 %s (%.4f, %.4f)\n",
+                                 city.c_str(), lat, lon);
+                } else {
+                    std::fprintf(stderr, "[enhance] 天气: 定位失败，回退北京\n");
+                }
             }
         }
     } else {
