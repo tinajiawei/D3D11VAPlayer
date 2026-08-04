@@ -1,4 +1,4 @@
-/build/
+﻿/build/
 /samples/
 *.user
 *.suo
@@ -9,3 +9,4 @@ media_engine_imgui.ini
 *.obj
 capture_loopback.wav
 capture_frame.bmp
+/884307090/   # 第三方 Wallpaper Engine 测试素材（完美壁纸），不进仓库
