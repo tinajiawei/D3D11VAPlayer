@@ -49,6 +49,9 @@ void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, 
     ImGui::Text("网页壁纸 (WebView2)");
     ImGui::SetNextItemWidth(240.0f);
     ImGui::InputText("URL", web_url_buf_, sizeof(web_url_buf_));
+    if (ImGui::IsItemDeactivated()) {
+        std::fprintf(stderr, "[panel] url input: %s\n", web_url_buf_);
+    }
     ImGui::SameLine();
     if (ImGui::Button("网页壁纸")) {
         requests.web_wallpaper_toggle = true;

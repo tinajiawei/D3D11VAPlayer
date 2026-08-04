@@ -4,6 +4,12 @@
 
 #include <windowsx.h>
 
+#include "imgui.h"
+#include "imgui_impl_win32.h"
+
+// 官方把该声明放在 #if 0 块内，需自行前向声明
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 namespace me {
 
 namespace {
@@ -85,6 +91,16 @@ LRESULT CALLBACK PanelWindow::wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 }
 
 LRESULT PanelWindow::handle_message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    // 键盘消息转发给面板 ImGui context：InputText 才能接收字符
+    const bool keyboard_msg = msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR ||
+                              msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP || msg == WM_IME_CHAR;
+    if (keyboard_msg && imgui_ctx_) {
+        ImGuiContext* prev = ImGui::GetCurrentContext();
+        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(imgui_ctx_));
+        const bool handled = ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp) != 0;
+        ImGui::SetCurrentContext(prev);
+        if (handled) return 0;
+    }
     switch (msg) {
         case WM_MOUSEMOVE:
             mouse_x_.store(GET_X_LPARAM(lp));
@@ -95,6 +111,8 @@ LRESULT PanelWindow::handle_message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_LBUTTONDOWN:
             left_down_.store(true);
+            // NOACTIVATE 窗口点击不会自动获得焦点：显式聚焦以接收键盘输入
+            SetFocus(hwnd);
             return 0;
         case WM_LBUTTONUP:
             left_down_.store(false);

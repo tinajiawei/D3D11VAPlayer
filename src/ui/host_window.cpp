@@ -1,6 +1,10 @@
 #include "ui/host_window.h"
 
 #include <shellapi.h>
+#include "imgui_impl_win32.h"
+
+// 官方把该声明放在 #if 0 块内，需自行前向声明
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 #include <windowsx.h>
 
 namespace me {
@@ -123,7 +127,15 @@ LRESULT HostWindow::handle_message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             handle_drop(wp);
             return 0;
         case WM_KEYDOWN:
+            // 先喂给 ImGui（主窗口面板的输入框需要键盘事件），未被消费才走快捷键
+            if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 0;
             if (on_key_) on_key_(static_cast<unsigned>(wp));
+            return 0;
+        case WM_CHAR:
+        case WM_SYSKEYDOWN:
+        case WM_SYSKEYUP:
+        case WM_IME_CHAR:
+            if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 0;
             return 0;
         case WM_MOUSEMOVE:
             mouse_x_.store(GET_X_LPARAM(lp));

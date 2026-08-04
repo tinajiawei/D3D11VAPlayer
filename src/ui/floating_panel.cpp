@@ -76,6 +76,7 @@ bool FloatingPanel::create_impl(HINSTANCE instance, ID3D11Device* device,
     ImGui_ImplWin32_Init(window_.handle());
     ImGui_ImplDX11_Init(device, context);
     ImGui::SetCurrentContext(main_ctx_);
+    window_.set_imgui_context(panel_ctx_);  // 面板输入框需要键盘事件
 
     device_ctx_ = context;
     std::fprintf(stderr, "[panel] 浮层控制面板已创建 %dx%d\n", width_, height_);

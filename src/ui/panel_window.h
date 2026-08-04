@@ -13,6 +13,8 @@ class PanelWindow {
 public:
     bool create(HINSTANCE instance, int width, int height);
     void destroy();
+    // 绑定面板 ImGui context（键盘消息经 WndProcHandler 写入该 context 的 io）
+    void set_imgui_context(void* imgui_ctx) { imgui_ctx_ = imgui_ctx; }
     bool valid() const { return hwnd_ != nullptr; }
     HWND handle() const { return hwnd_; }
     int width() const { return width_; }
@@ -32,6 +34,7 @@ private:
 
     HWND hwnd_ = nullptr;
     HINSTANCE instance_ = nullptr;
+    void* imgui_ctx_ = nullptr;  // ImGuiContext*（面板输入框需要键盘事件）
     int width_ = 380;
     int height_ = 540;
     std::atomic<int> mouse_wheel_{0};
