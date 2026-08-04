@@ -109,6 +109,12 @@ void maybe_schedule_reopen(const std::wstring& path, bool prefer_hw, double afte
 }
 
 void toggle_wallpaper() {
+    // 与网页壁纸互斥：先退出网页壁纸
+    if (g_web_wallpaper.active()) {
+        g_web_wallpaper.destroy();
+        ShowWindow(g_window.handle(), SW_SHOW);
+        std::fprintf(stderr, "[webwallpaper] 退出网页壁纸（切视频壁纸）\n");
+    }
     if (g_window.wallpaper_mode()) {
         g_floating_panel.request_destroy();
         g_window.exit_wallpaper_mode();
@@ -130,6 +136,7 @@ void toggle_wallpaper() {
 // 引擎渲染线程每帧回调：叠加 ImGui 控制面板（Present 由引擎在回调后执行）
 void toggle_web_wallpaper(const std::string& url) {
     if (g_web_wallpaper.active()) {
+        g_floating_panel.request_destroy();
         g_web_wallpaper.destroy();
         ShowWindow(g_window.handle(), SW_SHOW);  // 恢复主窗口
         std::fprintf(stderr, "[webwallpaper] 退出网页壁纸\n");
@@ -145,6 +152,12 @@ void toggle_web_wallpaper(const std::string& url) {
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &rc, 0);
     if (g_web_wallpaper.create(nullptr, rc, url)) {
         ShowWindow(g_window.handle(), SW_HIDE);  // 隐藏主窗口，网页壁纸铺满可见
+        // 网页壁纸同样显示浮层控制面板（背景/效果/天气/音频都在面板上调节）
+        if (g_engine) {
+            auto* dev = static_cast<ID3D11Device*>(me_get_d3d11_device(g_engine));
+            auto* ctx = static_cast<ID3D11DeviceContext*>(me_get_d3d11_context(g_engine));
+            g_floating_panel.request_create(GetModuleHandleW(nullptr), dev, ctx);
+        }
         std::fprintf(stderr, "[webwallpaper] 进入网页壁纸\n");
     } else {
         std::fprintf(stderr, "[webwallpaper] 创建失败（找不到 WorkerW）\n");
@@ -167,10 +180,12 @@ void present_callback(void*) {
     const bool wallpaper_mode = g_window.wallpaper_mode();
     const me::SequenceInfo seq = g_sequence.snapshot(
         static_cast<me::SequenceType>(g_sequence_type.load()), g_sequence_auto_next.load());
+    const bool web_wallpaper_active = g_web_wallpaper.active();
     if (g_floating_panel.active() || g_floating_panel.pending()) {
-        g_floating_panel.render(g_panel, g_controller, requests, &g_show_panel, wallpaper_mode, seq);
+        g_floating_panel.render(g_panel, g_controller, requests, &g_show_panel, wallpaper_mode,
+                                 web_wallpaper_active, seq);
     } else {
-        g_panel.draw(g_controller, requests, &g_show_panel, wallpaper_mode, seq);
+        g_panel.draw(g_controller, requests, &g_show_panel, wallpaper_mode, web_wallpaper_active, seq);
     }
     g_open_prefer_hw.store(requests.prefer_hw);  // 勾选/取消后立即生效：拖入新文件也用这个值
     if (requests.wallpaper_toggle) g_wallpaper_requested.store(true);

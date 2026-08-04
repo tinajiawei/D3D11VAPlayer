@@ -9,7 +9,8 @@ namespace me {
 
     static std::string g_audio_error;  // 音频设备切换失败提示
 void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, bool* show_panel,
-                          bool wallpaper_mode, const SequenceInfo& seq) {
+                          bool wallpaper_mode, bool web_wallpaper_active,
+                          const SequenceInfo& seq) {
     // 音频设备列表缓存（2 秒刷新一次，避免每帧枚举 COM 设备）
     static std::vector<std::string> g_devices;
     static double g_dev_refresh = 0.0;
@@ -57,7 +58,7 @@ void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, 
         std::fprintf(stderr, "[panel] url input: %s\n", web_url_buf_);
     }
     ImGui::SameLine();
-    if (ImGui::Button("网页壁纸")) {
+    if (ImGui::Button(web_wallpaper_active ? "退出网页壁纸" : "网页壁纸")) {
         requests.web_wallpaper_toggle = true;
         requests.web_url = web_url_buf_;
     }

@@ -33,7 +33,7 @@ class ControlPanel {
 public:
     // 在渲染线程每帧调用
     void draw(PlaybackController& controller, PanelRequest& requests, bool* show_panel,
-             bool wallpaper_mode, const SequenceInfo& seq);
+             bool wallpaper_mode, bool web_wallpaper_active, const SequenceInfo& seq);
     void set_open_error(const std::string& message) { open_error_ = message; }
     void set_web_url(const std::string& url);  // 外部（文件夹选择器）填入 URL 输入框
     std::string web_url() const { return web_url_buf_; }

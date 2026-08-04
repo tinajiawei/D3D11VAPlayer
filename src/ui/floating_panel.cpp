@@ -12,6 +12,7 @@ void FloatingPanel::request_create(HINSTANCE instance, ID3D11Device* device,
                                    ID3D11DeviceContext* context) {
     if (!device || !context) return;
     if (window_.valid()) return;
+    destroy_pending_.store(false);  // 切换壁纸模式时取消挂起的销毁，避免面板消失
     pending_instance_ = instance;
     pending_device_ = device;
     pending_context_ = context;
@@ -105,7 +106,8 @@ void FloatingPanel::destroy_impl() {
 
 void FloatingPanel::render(ControlPanel& panel, PlaybackController& controller,
                            PanelRequest& requests, bool* show_panel,
-                           bool wallpaper_mode, const SequenceInfo& seq) {
+                           bool wallpaper_mode, bool web_wallpaper_active,
+                           const SequenceInfo& seq) {
     // 先执行挂起的创建/销毁（渲染线程独占 DXGI/ImGui 资源）
     if (create_pending_.exchange(false)) {
         if (!create_impl(pending_instance_, pending_device_, pending_context_)) {
@@ -142,7 +144,7 @@ void FloatingPanel::render(ControlPanel& panel, PlaybackController& controller,
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
-    panel.draw(controller, requests, show_panel, wallpaper_mode, seq);
+    panel.draw(controller, requests, show_panel, wallpaper_mode, web_wallpaper_active, seq);
     ImGui::Render();
 
     device_ctx_->OMSetRenderTargets(1, rtv_.GetAddressOf(), nullptr);

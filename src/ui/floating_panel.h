@@ -29,7 +29,8 @@ public:
 
     // 渲染线程每帧调用：先执行挂起的创建/销毁，再绘制面板并 Present
     void render(ControlPanel& panel, PlaybackController& controller, PanelRequest& requests,
-                bool* show_panel, bool wallpaper_mode, const SequenceInfo& seq);
+                bool* show_panel, bool wallpaper_mode, bool web_wallpaper_active,
+                const SequenceInfo& seq);
 
     // 浮层面板接收拖入的文件（壁纸模式下主窗口点击穿透，拖放只能落到面板）
     void set_file_drop_callback(std::function<void(const std::wstring&)> cb) {

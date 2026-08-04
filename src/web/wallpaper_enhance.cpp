@@ -64,7 +64,7 @@ void compute_spectrum(const std::vector<float>& mono, std::vector<float>& out) {
         // 幅度归一化 + 平方根压缩（人耳近感知），乘增益让常见音量有可见波动
         const double mag = std::abs(f[static_cast<size_t>(k)]) / (kFftSize / 2.0);
         double v = std::sqrt(mag) * 2.6;
-        if (v < 0.03) v = 0.03;  // 下限：静音时也保留一个基础圆环
+        if (v < 0.08) v = 0.08;  // 下限：静音时也保留一个清晰可见的基础圆环
         out[static_cast<size_t>(k)] = static_cast<float>(std::min(1.0, v));
     }
 }
@@ -299,7 +299,7 @@ void WallpaperEnhance::audio_loop() {
             const DWORD now = GetTickCount();
             if (now - last_data_tick > 500 && now - last_idle_post >= 1000) {
                 last_idle_post = now;
-                std::vector<float> idle(static_cast<size_t>(kBinCount), 0.03f);
+                std::vector<float> idle(static_cast<size_t>(kBinCount), 0.08f);
                 {
                     std::lock_guard<std::mutex> lock(spec_mutex_);
                     spectrum_ = idle;
