@@ -223,6 +223,13 @@ LONG WINAPI crash_handler(EXCEPTION_POINTERS* ep) {
 }
 
 int wmain(int argc, wchar_t** argv) {
+    // 默认隐藏控制台窗口；--debug / --console 时显示（日志仍写入 stderr）
+    bool show_console = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::wstring argw = argv[i];
+        if (argw == L"--debug" || argw == L"--console") show_console = true;
+    }
+    if (const HWND con = GetConsoleWindow()) ShowWindow(con, show_console ? SW_SHOW : SW_HIDE);
     SetUnhandledExceptionFilter(&crash_handler);
     SetConsoleOutputCP(CP_UTF8);  // 让中文日志在控制台正确显示
     SetConsoleCP(CP_UTF8);

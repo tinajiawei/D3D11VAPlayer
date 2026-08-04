@@ -101,6 +101,7 @@ build\src\media_player_app.exe samples\test_hevc.mp4 --hw   # 优先硬解
 | `--headless` | 无头模式：HeadlessRenderer + NullAudioSink，不创建窗口 |
 | `--run-seconds <秒>` | 无头模式运行时长后自动退出（默认 8s） |
 | `--hw` | 优先 D3D11VA 硬解，失败自动降级软解 |
+| `--console` | 显示控制台窗口（默认隐藏；`--debug` 也会显示） |
 
 ## 测试
 

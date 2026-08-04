@@ -33,6 +33,7 @@ MediaEngine v0.2.0 使用说明
   media_player_app.exe --web-wallpaper URL  网页壁纸
   media_player_app.exe --wallpaper --wallpaper-keep 文件  持续视频壁纸（watchdog 用）
   media_player_app.exe --capture-screen 5  屏幕采集演示
+  media_player_app.exe --console         显示控制台窗口（默认隐藏）
   media_player_app.exe --capture-audio 3   系统声音采集（写 capture_loopback.wav）
   环境变量 ME_HW_BACKEND=d3d11va|amf|sw 可强制指定硬解后端
 
