@@ -58,10 +58,14 @@ std::atomic<int> g_seq_auto_next_change{-1};
 std::atomic<bool> g_seek_requested{false};
 std::atomic<double> g_seek_target{0.0};
 std::atomic<bool> g_web_pick_folder_requested{false};
-std::atomic<int> g_web_audio_vis{-1};
-std::atomic<int> g_web_weather{-1};
+std::atomic<int> g_web_audio_vis_state{0};
+std::atomic<int> g_web_weather_state{1};   // 天气默认开，城市留空=IP 定位
+std::atomic<int> g_web_bg_state{1};
+std::atomic<int> g_web_sakura_state{1};
+std::atomic<int> g_web_vis_state{1};
 std::mutex g_web_city_mutex;
 std::string g_web_city;
+bool g_web_active_prev = false;
 bool g_web_enhance_cli = false;
 bool g_headless_cli = false;
 bool g_wallpaper_keep = false;   // --headless 无头模式（HeadlessRenderer + NullAudioSink）
@@ -182,9 +186,12 @@ void present_callback(void*) {
         g_seek_target.store(requests.seek_target);
     }
     if (requests.web_pick_folder) g_web_pick_folder_requested.store(true);
-    if (requests.web_audio_vis >= 0) g_web_audio_vis.store(requests.web_audio_vis);
-    if (requests.web_weather >= 0) g_web_weather.store(requests.web_weather);
-    if (!requests.web_weather_city.empty()) {
+    if (requests.web_audio_vis >= 0) g_web_audio_vis_state.store(requests.web_audio_vis);
+    if (requests.web_weather >= 0) g_web_weather_state.store(requests.web_weather);
+    if (requests.web_background >= 1) g_web_bg_state.store(requests.web_background);
+    if (requests.web_sakura >= 0) g_web_sakura_state.store(requests.web_sakura);
+    if (requests.web_vis_model >= 0) g_web_vis_state.store(requests.web_vis_model);
+    if (requests.web_weather_city_edited) {
         std::lock_guard<std::mutex> lock(g_web_city_mutex);
         g_web_city = requests.web_weather_city;
     }
@@ -680,23 +687,48 @@ int wmain(int argc, wchar_t** argv) {
                 toggle_web_wallpaper(url);
             }
         }
+        if (g_web_enhance_cli) {
+            // 测试入口：--web-enhance 同时开启音频可视化 + 天气（IP 定位）
+            g_web_audio_vis_state.store(1);
+            g_web_weather_state.store(1);
+        }
         {
-            const int av = g_web_audio_vis.exchange(-1);
-            if (av >= 0) g_web_wallpaper.set_audio_visualization(av != 0);
-            const int we = g_web_weather.exchange(-1);
-            if (we >= 0) {
+            const bool web_active = g_web_wallpaper.active();
+            if (web_active) {
+                static bool a_applied = false;
+                static bool w_applied = false;
+                static int bg_applied = -1;
+                static int vis_applied = -1;
+                static bool sak_applied = false;
+                static std::string city_applied;
+                const bool want_a = g_web_audio_vis_state.load() != 0;
+                const bool want_w = g_web_weather_state.load() != 0;
+                const int want_bg = g_web_bg_state.load();
+                const bool want_sak = g_web_sakura_state.load() != 0;
+                const int want_vis = g_web_vis_state.load();
                 std::string city;
                 {
                     std::lock_guard<std::mutex> lock(g_web_city_mutex);
                     city = g_web_city;
                 }
-                g_web_wallpaper.set_weather(we != 0, city);
+                if (!g_web_active_prev || want_a != a_applied) {
+                    g_web_wallpaper.set_audio_visualization(want_a);
+                    a_applied = want_a;
+                }
+                if (!g_web_active_prev || want_w != w_applied || city != city_applied) {
+                    g_web_wallpaper.set_weather(want_w, city);  // 空城市 = IP 自动定位
+                    w_applied = want_w;
+                    city_applied = city;
+                }
+                if (!g_web_active_prev || want_bg != bg_applied || want_sak != sak_applied ||
+                    want_vis != vis_applied) {
+                    g_web_wallpaper.set_wallpaper_props(want_bg, want_sak, want_vis);
+                    bg_applied = want_bg;
+                    sak_applied = want_sak;
+                    vis_applied = want_vis;
+                }
             }
-        }
-        if (g_web_enhance_cli && g_web_wallpaper.active()) {
-            // 测试入口：--web-enhance 同时开启音频可视化 + 天气
-            g_web_wallpaper.set_audio_visualization(true);
-            g_web_wallpaper.set_weather(true, "北京");
+            g_web_active_prev = web_active;
         }
         if (g_open_requested.exchange(false)) {
             wchar_t file[MAX_PATH] = {};

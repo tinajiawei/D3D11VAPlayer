@@ -15,6 +15,10 @@ struct PanelRequest {
     int web_audio_vis = -1;   // 0/1：网页音频可视化(实验)
     int web_weather = -1;    // 0/1：网页天气(实验)
     std::string web_weather_city;
+    bool web_weather_city_edited = false;  // 城市输入框被编辑过（含清空）
+    int web_background = -1; // 1~31：网页背景编号
+    int web_sakura = -1;     // 0/1：樱花
+    int web_vis_model = -1;  // 0/1/2：音频可视化模型
     std::string web_url;  // 请求切换壁纸模式
     int sequence_type = -1;      // >=0：用户切换了扫描类型（SequenceType）
     bool sequence_prev = false;
@@ -38,8 +42,11 @@ private:
     bool prefer_hw_ = true;
     char web_url_buf_[256] = {};
     bool web_audio_vis_ = false;
-    bool web_weather_on_ = false;
-    char web_weather_city_[64] = "北京";
+    bool web_weather_on_ = true;   // 天气默认开启，城市留空=IP 自动定位
+    char web_weather_city_[64] = "";
+    int web_background_ = 1;
+    bool web_sakura_ = true;
+    int web_vis_model_ = 1;
     std::string open_error_;  // 最近一次打开失败的原因（面板显示）
 };
 

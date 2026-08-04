@@ -251,7 +251,14 @@ void WebViewWallpaper::set_weather(bool on, const std::string& city) {
         std::lock_guard<std::mutex> lock(weather_city_mutex_);
         weather_city_ = city;
     }
-    if (enhance_) enhance_->set_weather_enabled(on, city.empty() ? "北京" : city);
+    if (enhance_) enhance_->set_weather_enabled(on, city);  // 空城市 = IP 自动定位
+}
+
+void WebViewWallpaper::set_wallpaper_props(int background, bool sakura, int vis_model) {
+    web_bg_.store(background);
+    web_sakura_.store(sakura);
+    web_vis_model_.store(vis_model);
+    if (thread_id_) PostThreadMessageW(thread_id_, WM_APP + 1, kOpProps, 0);
 }
 
 void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url) {
@@ -338,6 +345,7 @@ void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url
                                                             if (result && *result) std::fprintf(stderr, "[webview] 布局注入结果: %ls\n", result);
                                                             return S_OK;
                                                         }).Get());
+                                                push_wallpaper_props();
                                             }
                                             return S_OK;
                                         }).Get(), &nav_token);
@@ -413,6 +421,7 @@ void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url
                 case kOpRemount: remount_thread(); break;
                 case kOpSpectrum: push_audio_spectrum(); break;
                 case kOpWeather: push_weather(); break;
+                case kOpProps: push_wallpaper_props(); break;
                 case kOpBack: if (webview_) webview_->GoBack(); break;
                 case kOpForward: if (webview_) webview_->GoForward(); break;
                 case kOpReload: if (webview_) webview_->Reload(); break;
@@ -502,6 +511,16 @@ void WebViewWallpaper::navigate_thread(const std::string& url) {
     webview_->Navigate(wurl.c_str());
 }
 
+void WebViewWallpaper::push_wallpaper_props() {
+    if (!webview_) return;
+    char js[512] = {};
+    std::snprintf(js, sizeof(js),
+                  "window.wallpaperPropertyListener&&window.wallpaperPropertyListener.applyUserProperties&&"
+                  "window.wallpaperPropertyListener.applyUserProperties({"
+                  "DefaultWallpaper:{value:%d},showSakura:{value:%s},visual_audio_model:{value:%d}});",
+                  web_bg_.load(), web_sakura_.load() ? "true" : "false", web_vis_model_.load());
+    webview_->ExecuteScript(wide_from_utf8(js).c_str(), nullptr);
+}
 void WebViewWallpaper::push_audio_spectrum() {
     if (!webview_) return;
     const std::vector<float> spec = enhance_ ? enhance_->take_spectrum() : std::vector<float>{};

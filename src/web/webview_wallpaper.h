@@ -35,13 +35,15 @@ public:
     // 实验增强：系统音频可视化（FFT 注入）+ 天气注入（默认关闭）
     void set_audio_visualization(bool on);
     void set_weather(bool on, const std::string& city);
+    // 网页壁纸效果：背景编号 1~31、樱花开关、音频可视化模型 0/1/2
+    void set_wallpaper_props(int background, bool sakura, int vis_model);
     void go_back();
     void go_forward();
     void reload();
 
 private:
     enum WebOp { kOpNavigate = 1, kOpClose, kOpResize, kOpBack, kOpForward, kOpReload, kOpRemount,
-                   kOpSpectrum = 0x51, kOpWeather = 0x52 };
+                   kOpSpectrum = 0x51, kOpWeather = 0x52, kOpProps = 0x53 };
 
     void thread_main(HWND workerw, RECT rc, const std::string& url);
     void navigate_thread(const std::string& url);  // 必须在 STA 线程内调用
@@ -49,6 +51,7 @@ private:
     void remount_thread();                          // 桌面层重建后重新挂载（STA 线程内）
     void push_audio_spectrum();                     // 频谱注入页面（STA 线程内）
     void push_weather();                            // 天气注入页面（STA 线程内）
+    void push_wallpaper_props();                    // 效果属性注入页面（STA 线程内）
     std::wstring user_data_folder() const;
 
     static constexpr const wchar_t* kClassName = L"MediaEngineWebViewWindow";
@@ -71,6 +74,9 @@ private:
     std::atomic<bool> weather_enabled_{false};
     std::mutex weather_city_mutex_;
     std::string weather_city_;
+    std::atomic<int> web_bg_{1};
+    std::atomic<bool> web_sakura_{true};
+    std::atomic<int> web_vis_model_{1};
 };
 
 }  // namespace me

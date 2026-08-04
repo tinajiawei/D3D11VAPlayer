@@ -66,12 +66,18 @@ void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, 
     }
     ImGui::TextDisabled("本地网页：填文件夹路径或 index.html 路径，也可点按钮选择");
     if (ImGui::Checkbox("网页音频可视化(实验)", &web_audio_vis_)) requests.web_audio_vis = web_audio_vis_ ? 1 : 0;
-    if (ImGui::Checkbox("网页天气(实验)", &web_weather_on_)) requests.web_weather = web_weather_on_ ? 1 : 0;
+    if (ImGui::Checkbox("网页天气(默认开,IP定位)", &web_weather_on_)) requests.web_weather = web_weather_on_ ? 1 : 0;
     ImGui::SameLine();
     ImGui::SetNextItemWidth(100);
     if (ImGui::InputText("城市", web_weather_city_, sizeof(web_weather_city_))) {
+        requests.web_weather_city_edited = true;
         requests.web_weather_city = web_weather_city_;
     }
+    ImGui::TextDisabled("城市留空=按当前IP自动定位");
+    if (ImGui::SliderInt("背景编号", &web_background_, 1, 31)) requests.web_background = web_background_;
+    ImGui::SameLine();
+    if (ImGui::Checkbox("樱花", &web_sakura_)) requests.web_sakura = web_sakura_ ? 1 : 0;
+    if (ImGui::Combo("音频可视化", &web_vis_model_, "无\0完美壁纸(圆)\0完美直线\0", 3)) requests.web_vis_model = web_vis_model_;
 
     ImGui::Separator();
     ImGui::Text("序列播放（文件夹+子文件夹）");

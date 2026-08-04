@@ -77,6 +77,25 @@ double json_number(const std::string& s, const char* key) {
     return 0.0;
 }
 
+// 字符串字段提取（"city":"北京"）
+std::string json_string(const std::string& s, const char* key) {
+    const std::string k = std::string("\"") + key + "\"";
+    const size_t p = s.find(k);
+    if (p == std::string::npos) return {};
+    const size_t colon = s.find(':', p + k.size());
+    if (colon == std::string::npos) return {};
+    size_t q = colon + 1;
+    while (q < s.size() && (s[q] == ' ' || s[q] == '\t')) ++q;
+    if (q >= s.size() || s[q] != '"') return {};
+    ++q;
+    std::string out;
+    while (q < s.size() && s[q] != '"') {
+        if (s[q] == '\\' && q + 1 < s.size()) ++q;
+        out += s[q++];
+    }
+    return out;
+}
+
 // daily 数组字段取第一个数值（"temperature_2m_max":[34.6]）
 double json_array_first_number(const std::string& s, const char* key) {
     const std::string k = std::string("\"") + key + "\"";
@@ -256,17 +275,39 @@ void WallpaperEnhance::audio_loop() {
 }
 
 void WallpaperEnhance::weather_loop(const std::string city_utf8) {
-    // 1) 地理编码（Open-Meteo 无需 key）
-    const std::string geo_url =
-        "https://geocoding-api.open-meteo.com/v1/search?name=" + url_encode_utf8(city_utf8) +
-        "&count=1&language=zh&format=json";
-    const std::string geo = http_get(geo_url);
-    const double lat = json_number(geo, "latitude");
-    const double lon = json_number(geo, "longitude");
+    // 1) 定位：有城市名 → Open-Meteo 地理编码；留空 → 按当前 IP 自动定位（ip-api.com 免费接口）
+    double lat = 0.0, lon = 0.0;
+    std::string city = city_utf8;
+    if (city.empty()) {
+        // HTTPS 接口（ip-api 免费版是 http，部分代理环境不稳）
+        const std::string ip = http_get("https://ipwho.is/");
+        lat = json_number(ip, "latitude");
+        lon = json_number(ip, "longitude");
+        if (lat != 0.0 && lon != 0.0) {
+            city = json_string(ip, "city");
+            if (city.empty()) city = json_string(ip, "region");
+            std::fprintf(stderr, "[enhance] 天气: IP 定位 %s (%.4f, %.4f)\n",
+                         city.c_str(), lat, lon);
+        } else {
+            std::fprintf(stderr, "[enhance] 天气: IP 定位失败，回退北京\n");
+        }
+    } else {
+        const std::string geo_url =
+            "https://geocoding-api.open-meteo.com/v1/search?name=" + url_encode_utf8(city) +
+            "&count=1&language=zh&format=json";
+        const std::string geo = http_get(geo_url);
+        lat = json_number(geo, "latitude");
+        lon = json_number(geo, "longitude");
+        if (lat == 0.0 && lon == 0.0) {
+            std::fprintf(stderr, "[enhance] 天气: 城市解析失败（%s）\n", city.c_str());
+            weather_enabled_.store(false);
+            return;
+        }
+    }
     if (lat == 0.0 && lon == 0.0) {
-        std::fprintf(stderr, "[enhance] 天气: 城市解析失败（%s）\n", city_utf8.c_str());
-        weather_enabled_.store(false);
-        return;
+        lat = 39.9042;  // 北京兜底
+        lon = 116.4074;
+        if (city.empty()) city = "北京";
     }
 
     // 2) 天气预报（current + 当日高低温）
@@ -285,7 +326,7 @@ void WallpaperEnhance::weather_loop(const std::string city_utf8) {
 
     char payload[256] = {};
     std::snprintf(payload, sizeof(payload), "%s|%.1f|%s|%.0f|%.0f|%.0f",
-                  city_utf8.c_str(), temp, wmo_text(code), hi, lo, wind);
+                  city.c_str(), temp, wmo_text(code), hi, lo, wind);
     {
         std::lock_guard<std::mutex> lock(weather_mutex_);
         weather_payload_ = payload;
