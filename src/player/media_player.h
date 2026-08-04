@@ -69,6 +69,7 @@ public:
 private:
     void demux_loop();
     void video_decode_loop();
+    bool recreate_video_decoder();  // seek/切换后硬解进入错误状态时重建
     void audio_decode_loop();
     void render_loop();
     void stop_threads();
@@ -98,6 +99,7 @@ private:
     std::atomic<bool> has_audio_{false};
     bool audio_enabled_ = false;
     std::atomic<bool> hw_active_{false};
+    bool prefer_hw_ = false;  // open 时的硬解偏好（重建解码器时沿用）
     std::atomic<bool> video_flush_requested_{false};
     std::atomic<bool> audio_flush_requested_{false};
     std::atomic<bool> audio_resampler_reopen_{false};  // 换设备/变速后强制重开重采样器

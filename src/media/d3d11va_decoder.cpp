@@ -74,6 +74,9 @@ PopResult D3D11vaDecoder::pop(AVFrame* out) {
     if (pending_) {
         const int ret = avcodec_send_packet(ctx_.get(), pending_.get());
         pending_.reset();
+        if (ret == AVERROR_EOF) {
+            return PopResult::NeedMoreData;
+        }
         if (ret < 0) {
             error_ = error_from_av(ret, "avcodec_send_packet");
             return PopResult::Failed;

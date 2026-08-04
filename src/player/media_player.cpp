@@ -45,6 +45,7 @@ Error MediaPlayer::open(const std::string& path, bool prefer_hw) {
 }
 
 Error MediaPlayer::open_impl(const std::string& path, bool prefer_hw) {
+    prefer_hw_ = prefer_hw;
     if (!sync_) return Error::make(Err::MediaOpenFailed, "同步引擎不可用（sync 插件未注入）");
     close();
 
@@ -349,9 +350,21 @@ void MediaPlayer::demux_loop() {
 }
 
 // ---------- 线程：视频解码（消费者 1） ----------
+bool MediaPlayer::recreate_video_decoder() {
+    if (!source_.has_video()) return false;
+    auto decoder = DecoderFactory::create(*source_.video_stream()->codecpar, prefer_hw_);
+    if (!decoder) return false;
+    video_decoder_ = std::move(decoder);
+    hw_active_.store(video_decoder_->is_hardware());
+    ME_LOG_WARN("视频解码器已重建: ", video_decoder_->name());
+    return true;
+}
+
 void MediaPlayer::video_decode_loop() {
     ME_LOG_INFO("视频解码线程启动");
     bool eof = false;
+    int recreate_count = 0;
+    bool skip_until_keyframe = false;
     uint64_t last_vd_gen = seek_gen_.load();
     while (running_.load()) {
         if (eof) {
@@ -367,6 +380,7 @@ void MediaPlayer::video_decode_loop() {
         }
         if (video_flush_requested_.exchange(false)) {
             video_decoder_->flush();
+            recreate_count = 0;
         }
 
         bool draining = false;
@@ -378,6 +392,10 @@ void MediaPlayer::video_decode_loop() {
             video_decoder_->push(nullptr);
             draining = true;
         } else {
+            if (skip_until_keyframe && !(packet->flags & AV_PKT_FLAG_KEY)) {
+                continue;  // 解码器重建后跳过非关键帧，直到下一个关键帧
+            }
+            skip_until_keyframe = false;
             video_decoder_->push(packet.get());
         }
 
@@ -400,6 +418,13 @@ void MediaPlayer::video_decode_loop() {
                 break;
             } else {
                 ME_LOG_ERROR("视频解码失败: ", video_decoder_->error().message());
+                if (recreate_count < 2 && recreate_video_decoder()) {
+                    ++recreate_count;
+                    skip_until_keyframe = true;
+                    video_done_.store(false);
+                    eof = false;
+                    break;  // 跳出内层，外层继续读包（跳到下一关键帧）
+                }
                 eof = true;
                 break;
             }
