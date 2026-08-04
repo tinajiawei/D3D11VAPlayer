@@ -64,6 +64,7 @@ bool HostWindow::enter_wallpaper_mode() {
     SetWindowLongPtrW(hwnd_, GWL_STYLE,
                       WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN);
     me::ensure_workerw_zorder(layer);
+    me::refresh_desktop_icons(layer);
 
     // 铺满当前窗口所在显示器
     const HMONITOR monitor = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
@@ -81,6 +82,10 @@ bool HostWindow::enter_wallpaper_mode() {
     ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
     wallpaper_mode_ = true;
+    std::fprintf(stderr, "[wallpaper] 进入壁纸模式: workerw=%p raised=%d child=%d size=%dx%d\n",
+                 static_cast<void*>(workerw), layer.raised ? 1 : 0,
+                 layer.child_workerw ? 1 : 0, mi.rcMonitor.right - mi.rcMonitor.left,
+                 mi.rcMonitor.bottom - mi.rcMonitor.top);
 
     // 监听 WorkerW/DefView 销毁与 Explorer 重启：桌面层重建后自动重新挂载
     wallpaper_watcher_ = std::make_unique<me::DesktopLayerWatcher>();
@@ -100,6 +105,7 @@ void HostWindow::exit_wallpaper_mode() {
     ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
     wallpaper_mode_ = false;
+    std::fprintf(stderr, "[wallpaper] 退出壁纸模式\n");
 }
 
 void HostWindow::remount_wallpaper() {
@@ -114,6 +120,7 @@ void HostWindow::remount_wallpaper() {
         SetWindowLongPtrW(hwnd_, GWL_STYLE,
                           WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN);
         me::ensure_workerw_zorder(layer);
+        me::refresh_desktop_icons(layer);
         const HMONITOR monitor = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = {};
         mi.cbSize = sizeof(mi);

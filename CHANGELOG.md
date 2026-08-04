@@ -1,5 +1,12 @@
 ﻿# 版本记录
 
+## v0.2.5（2026-08）— 崩溃定位与 24H2 挂载加固
+- 崩溃处理器升级：打印异常线程、模块名、模块偏移（RVA）、32 帧调用栈，并自动写 media_player_app_crash.dmp（minidump）
+- 渲染器加固：draw_frame / Present 增加 RTV 空指针保护；ResizeBuffers/GetBuffer 失败时尝试恢复 RTV，避免下一帧空指针崩溃
+- 图标层快照刷新（隐藏/显示 DefView）从查找/轮询中移出，只在挂载完成后执行一次，避免 24H2 上反复触发 explorer 重建
+- 新增壁纸模式进入/退出/重挂日志（[wallpaper]）
+- 新增 pdb_sym 符号化工具（开发用）：根据 PDB 把崩溃 RVA 还原为函数名和行号
+
 ## v0.2.4（2026-08）— Win11 24H2 桌面新模型适配
 - WorkerW 查找兼容双模型：经典顶层路径（Win10/23H2）+ Progman 子窗口枚举（24H2 新模型）
 - 检测 Progman 的 WS_EX_NOREDIRECTIONBITMAP 判断新模型；自动维护 WorkerW 在 SHELLDLL_DefView 之下的 Z 序，并触发图标层重绘消除切换快照

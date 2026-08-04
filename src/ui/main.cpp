@@ -1,4 +1,4 @@
-#include <algorithm>
+﻿#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -9,6 +9,11 @@
 
 #include <windows.h>
 #include <commdlg.h>
+#include <dbghelp.h>
+#include <psapi.h>
+
+#pragma comment(lib, "dbghelp.lib")
+#pragma comment(lib, "psapi.lib")
 
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
@@ -215,10 +220,55 @@ int run_capture_audio(double seconds) {
     return 0;
 }
 
+void print_address_module(void* addr) {
+    HMODULE mod = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(addr), &mod)) {
+        std::fprintf(stderr, "[crash]   at 0x%p (未知模块)\n", addr);
+        return;
+    }
+    MODULEINFO mi = {};
+    if (GetModuleInformation(GetCurrentProcess(), mod, &mi, sizeof(mi))) {
+        wchar_t name[MAX_PATH] = {};
+        GetModuleBaseNameW(GetCurrentProcess(), mod, name, MAX_PATH);
+        std::fprintf(stderr, "[crash]   at 0x%p  %ls + 0x%llX\n", addr, name,
+                     static_cast<ULONGLONG>(static_cast<BYTE*>(addr) -
+                                            static_cast<BYTE*>(mi.lpBaseOfDll)));
+    } else {
+        std::fprintf(stderr, "[crash]   at 0x%p 模块=%p\n", addr, static_cast<void*>(mod));
+    }
+}
+
+void write_minidump(EXCEPTION_POINTERS* ep) {
+    wchar_t path[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, path, MAX_PATH);
+    wchar_t* dot = wcsrchr(path, L'.');
+    if (dot) *dot = L'\0';
+    wcscat_s(path, L"_crash.dmp");
+    HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    MINIDUMP_EXCEPTION_INFORMATION mei = {GetCurrentThreadId(), ep, FALSE};
+    MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file,
+                      MiniDumpNormal, ep ? &mei : nullptr, nullptr, nullptr);
+    CloseHandle(file);
+    std::fprintf(stderr, "[crash] 已写转储: %ls\n", path);
+}
+
 LONG WINAPI crash_handler(EXCEPTION_POINTERS* ep) {
-    std::fprintf(stderr, "[crash] 未处理异常: 0x%08X at 0x%p\n",
-                static_cast<unsigned>(ep->ExceptionRecord->ExceptionCode),
-                ep->ExceptionRecord->ExceptionAddress);
+    std::fprintf(stderr, "[crash] 未处理异常: 0x%08X at 0x%p (tid=%u)\n",
+                 static_cast<unsigned>(ep->ExceptionRecord->ExceptionCode),
+                 ep->ExceptionRecord->ExceptionAddress, GetCurrentThreadId());
+    print_address_module(ep->ExceptionRecord->ExceptionAddress);
+
+    // 调用栈：打印每帧的模块偏移（无 PDB 也能定位模块；结合本机构建 PDB 可还原函数）
+    void* frames[32] = {};
+    const USHORT count = CaptureStackBackTrace(0, 32, frames, nullptr);
+    for (USHORT i = 1; i < count; ++i) {
+        print_address_module(frames[i]);
+    }
+    write_minidump(ep);
     return EXCEPTION_EXECUTE_HANDLER;
 }
 

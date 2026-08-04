@@ -195,13 +195,17 @@ bool ensure_workerw_zorder(const DesktopLayer& layer) {
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
     std::fprintf(stderr, "[workerw] 调整 Z 序: workerw=%p defview=%p\n",
                  static_cast<void*>(layer.workerw), static_cast<void*>(layer.defview));
+    return true;
+}
 
-    // 24H2 桌面切换会用一张快照盖在图标层上，需触发图标层重绘消除快照
-    if (layer.child_workerw && layer.defview) {
-        ShowWindow(layer.defview, SW_HIDE);
-        Sleep(0);
-        ShowWindow(layer.defview, SW_SHOWNORMAL);
-    }
+bool refresh_desktop_icons(const DesktopLayer& layer) {
+    if (!layer.child_workerw || !layer.defview) return false;
+    // 24H2 桌面切换会用一张快照盖在图标层上，隐藏/显示触发重绘消除快照
+    ShowWindow(layer.defview, SW_HIDE);
+    Sleep(0);
+    ShowWindow(layer.defview, SW_SHOWNORMAL);
+    std::fprintf(stderr, "[workerw] 已触发图标层重绘: defview=%p\n",
+                 static_cast<void*>(layer.defview));
     return true;
 }
 

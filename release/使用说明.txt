@@ -1,4 +1,4 @@
-﻿MediaEngine v0.2.4 使用说明
+﻿MediaEngine v0.2.5 使用说明
 ================================
 
 一、快速开始
@@ -46,4 +46,5 @@
   子窗口，切换壁纸后可能销毁）。若壁纸模式失败或桌面图标异常：
   1. 用 media_player_app.exe --console 启动后再试，收集 [workerw] 日志；
   2. 或直接运行 desktop_probe.exe --watch 5，把输出发回来定位。
-  v0.2.4 起会自动监听桌面层重建并重新挂载。
+  v0.2.4 起会自动监听桌面层重建并重新挂载；v0.2.5 起崩溃时会在程序目录
+  生成 media_player_app_crash.dmp（minidump），把日志和该文件发回即可精确定位。

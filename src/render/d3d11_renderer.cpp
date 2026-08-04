@@ -1,4 +1,4 @@
-#include "render/d3d11_renderer.h"
+﻿#include "render/d3d11_renderer.h"
 
 #include <cstdio>
 #include <cstring>
@@ -215,7 +215,7 @@ void D3D11Renderer::set_pending_size(int width, int height) {
 }
 
 Error D3D11Renderer::draw_frame(const AVFrame* frame) {
-    if (!device_ || !frame) return Error::success();
+    if (!device_ || !rtv_ || !frame) return Error::success();
 
     apply_pending_size();
 
@@ -360,7 +360,7 @@ Error D3D11Renderer::present_swapchain() {
         ME_LOG_INFO("[render] dump requested");
         debug_dump("E:\\新建文件夹\\chatgpt\\build\\src\\debug_frame.bmp");
     }
-    if (!swapchain_) return Error::success();
+    if (!swapchain_ || !rtv_) return Error::success();
     // 不阻塞 vsync：虚拟/远程显示器可能没有正常垂直同步信号，Present(1,0) 会永久阻塞；
     // 帧率由播放器自身的延迟调度控制（docs/03），无需依赖显示器刷新。
     const HRESULT hr = swapchain_->Present(0, 0);
@@ -468,14 +468,21 @@ void D3D11Renderer::apply_pending_size() {
         ME_LOG_INFO("渲染器尺寸变化: ", w, "x", h);
     } else {
         ME_LOG_WARN("ResizeBuffers 失败: ", static_cast<unsigned>(hr & 0xffff));
+        create_rtv();  // 尝试恢复旧缓冲的 RTV，避免下一帧空指针
     }
 }
 
 void D3D11Renderer::create_rtv() {
     Microsoft::WRL::ComPtr<ID3D11Texture2D> back_buffer;
-    swapchain_->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
-    if (back_buffer) {
-        device_->CreateRenderTargetView(back_buffer.Get(), nullptr, &rtv_);
+    const HRESULT hr = swapchain_->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
+    if (FAILED(hr) || !back_buffer) {
+        ME_LOG_WARN("GetBuffer 失败: ", static_cast<unsigned>(hr & 0xffff));
+        return;
+    }
+    const HRESULT hr2 = device_->CreateRenderTargetView(back_buffer.Get(), nullptr, &rtv_);
+    if (FAILED(hr2)) {
+        ME_LOG_WARN("CreateRenderTargetView 失败: ", static_cast<unsigned>(hr2 & 0xffff));
+        rtv_.Reset();
     }
 }
 

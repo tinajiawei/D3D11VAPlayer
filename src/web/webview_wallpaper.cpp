@@ -245,6 +245,7 @@ void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url
         if (!layer.ok()) layer.workerw = workerw;
         workerw_ = layer.workerw;
         me::ensure_workerw_zorder(layer);
+        me::refresh_desktop_icons(layer);
         if (controller_) {
             // WebView2 不允许 SetParent 宿主窗口：用官方 put_ParentWindow 把内容挂到桌面层
             const HRESULT pr = controller_->put_ParentWindow(layer.workerw);
@@ -314,6 +315,7 @@ void WebViewWallpaper::remount_thread() {
     if (!layer.ok()) return;
     workerw_ = layer.workerw;
     me::ensure_workerw_zorder(layer);
+    me::refresh_desktop_icons(layer);
     const HRESULT pr = controller_->put_ParentWindow(layer.workerw);
     RECT wrc = {};
     GetClientRect(layer.workerw, &wrc);

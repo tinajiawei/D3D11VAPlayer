@@ -34,6 +34,10 @@ DesktopLayer wait_desktop_layer(unsigned timeout_ms = 3000);
 // 保证 WorkerW 在 SHELLDLL_DefView 之下（同父窗口时调整相对 Z 序）。
 bool ensure_workerw_zorder(const DesktopLayer& layer);
 
+// 24H2 新模型：桌面切换后图标层上有残留快照，隐藏/显示 DefView 触发重绘。
+// 只在挂载完成后调用一次（不要在查找/轮询里反复调用）。
+bool refresh_desktop_icons(const DesktopLayer& layer);
+
 // 监听 WorkerW/DefView 销毁与 Explorer 重建（TaskbarCreated），自动触发重新挂载回调。
 // 回调在工作线程执行；如需操作窗口，请转发到窗口所属线程（如 PostMessage）。
 class DesktopLayerWatcher {
