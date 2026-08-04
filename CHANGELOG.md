@@ -1,4 +1,9 @@
-# 版本记录
+﻿# 版本记录
+
+## v0.2.3（2026-08）— Win11 壁纸兼容增强
+- WorkerW 查找增强：枚举并打印全部 WorkerW 诊断（hwnd/vis/defview/矩形），Win11 备选放宽为“覆盖主屏幕或工作区”
+- 无可用 WorkerW 时回退 Progman，不再直接失败
+- 壁纸失败时用 --console 启动即可看到 [workerw] 诊断日志，便于收集反馈
 
 ## v0.2.2（2026-08）— Win11 兼容
 - Win11 桌面 WorkerW 查找兼容（经典方法失效时枚举可见全屏 WorkerW）+ 桌面层诊断日志
