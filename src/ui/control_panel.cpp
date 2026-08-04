@@ -118,8 +118,9 @@ void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, 
             scrubbing = true;
         }
         if (ImGui::IsItemDeactivatedAfterEdit()) {
-            scrubbing = false;      // 松手：执行 seek 到用户拖到的位置
-            controller.seek(position);
+            scrubbing = false;      // 松手：seek 交给主线程执行（渲染线程不能阻塞在 avformat_seek）
+            requests.seek_requested = true;
+            requests.seek_target = position;
         }
 
         if (ImGui::Button(controller.paused() ? "播放" : "暂停")) controller.toggle_pause();

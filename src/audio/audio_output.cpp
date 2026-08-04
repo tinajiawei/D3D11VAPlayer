@@ -1,4 +1,4 @@
-#include "audio/audio_output.h"
+﻿#include "audio/audio_output.h"
 
 #include <algorithm>
 #include <chrono>
@@ -578,6 +578,8 @@ void AudioOutput::run_loop() {
 void AudioOutput::release_audio_objects() {
     stop();
     paused_.store(false);  // 新会话默认播放态，避免暂停状态跨会话残留导致无声
+    played_frames_.store(0);  // 切换文件/设备时归零：否则新会话主时钟锚定在旧文件位置上
+
     if (auto r = ring_.load()) r->abort();
     if (mix_fmt_) CoTaskMemFree(mix_fmt_);
     mix_fmt_ = nullptr;

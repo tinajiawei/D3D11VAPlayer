@@ -54,6 +54,8 @@ std::atomic<bool> g_seq_next_requested{false};
 std::atomic<bool> g_seq_auto_requested{false};
 std::atomic<int> g_seq_type_requested{-1};
 std::atomic<int> g_seq_auto_next_change{-1};
+std::atomic<bool> g_seek_requested{false};
+std::atomic<double> g_seek_target{0.0};
 bool g_headless_cli = false;
 bool g_wallpaper_keep = false;   // --headless 无头模式（HeadlessRenderer + NullAudioSink）
 double g_run_seconds = 8.0;    // --run-seconds 无头运行结束时间
@@ -168,6 +170,10 @@ void present_callback(void*) {
     if (requests.sequence_next) g_seq_next_requested.store(true);
     if (requests.sequence_type >= 0) g_seq_type_requested.store(requests.sequence_type);
     if (requests.sequence_auto_next >= 0) g_seq_auto_next_change.store(requests.sequence_auto_next);
+    if (requests.seek_requested) {
+        g_seek_requested.store(true);
+        g_seek_target.store(requests.seek_target);
+    }
     // 播完自动下一个（壁纸模式同样生效：图片/视频轮播）
     if (g_sequence_auto_next.load() && g_controller.ended() && !g_controller.paused()) {
         g_seq_auto_requested.store(true);
@@ -595,6 +601,10 @@ int wmain(int argc, wchar_t** argv) {
             }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
+        }
+        if (g_seek_requested.exchange(false)) {
+            // 主线程执行 seek：avformat_seek_file 可能阻塞数百 ms，不能占用渲染线程
+            g_controller.seek(g_seek_target.load());
         }
         {
             const int auto_change = g_seq_auto_next_change.exchange(-1);

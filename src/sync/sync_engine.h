@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <mutex>
 #include "api/isync_engine.h"
@@ -38,7 +38,7 @@ public:
 
 private:
     IAudioSink* audio_ = nullptr;
-    PlaybackClock clock_;
+    mutable PlaybackClock clock_;  // master_clock() 超时回退时需要在 const 路径更新位置
     mutable std::mutex audio_lock_;
     double audio_offset_ = 0.0;  // seek 后主时钟的偏差补偿
     mutable bool audio_pending_ = false;  // 等待 seek 后的第一帧音频（master_clock 超时兜底会清掉）
@@ -46,6 +46,8 @@ private:
     uint64_t pending_gen_ = 0;  // 冻结对应的 seek 代数（防止旧 seek 的帧锚定新 seek）
     double freeze_start_qpc_ = 0.0;       // 冻结起始墙钟（超时兜底，防止管线背压导致永久冻结）
     mutable bool freeze_expired_logged_ = false;
+    mutable bool audio_fallback_ = false;  // 音频起播超时后回退单调时钟，直到新音频帧重新锚定
+
     double duration_ = 0.0;
 };
 

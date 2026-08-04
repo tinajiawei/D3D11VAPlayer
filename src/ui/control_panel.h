@@ -16,6 +16,8 @@ struct PanelRequest {
     bool sequence_prev = false;
     bool sequence_next = false;
     int sequence_auto_next = -1; // 0/1：用户切换了自动播放下一个
+    bool seek_requested = false;  // 进度条松手：seek 交给主线程执行，避免阻塞渲染线程
+    double seek_target = 0.0;
 };
 
 // Dear ImGui 控制面板（docs/00）：可隐藏（H 键），只通过 PlaybackController 交互。

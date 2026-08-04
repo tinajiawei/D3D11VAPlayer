@@ -1,4 +1,4 @@
-#include "sync/sync_engine.h"
+﻿#include "sync/sync_engine.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,6 +10,7 @@ namespace me {
 
 namespace {
 constexpr double kMaxVideoDelay = 0.20;  // 一帧最多等 200ms（防跳变）
+constexpr double kAudioStartTimeout = 1.5;  // 音频起播等待上限（4K 中段 seek 常超 500ms）
 constexpr double kMinSpeed = 0.25;
 constexpr double kMaxSpeed = 4.0;
 }  // namespace
@@ -20,18 +21,22 @@ double SyncEngine::master_clock() const {
         std::lock_guard<std::mutex> lock(audio_lock_);
         if (audio_->is_active()) {
             if (audio_pending_) {
-                // 超时兜底：若 500ms 内音频没起播（如设备切换时管线背压饿死音频队列），
-                // 解除冻结回到正常时钟，避免主时钟永久卡死
-                if (qpc_seconds() - freeze_start_qpc_ > 0.5) {
+                // 超时兜底：若 1.5s 内音频没起播（如 4K 中段 seek 找关键帧较慢），
+                // 回退单调时钟继续走（从目标位置起算），避免用错误偏移的主时钟造成卡顿/跳变；
+                // 新音频帧到达时 audio_resume 会重新锚定。
+                if (qpc_seconds() - freeze_start_qpc_ > kAudioStartTimeout) {
                     if (!freeze_expired_logged_) {
                         freeze_expired_logged_ = true;
-                        ME_LOG_WARN("[sync] 等待音频起播超时(500ms)，解除冻结");
+                        ME_LOG_WARN("[sync] 等待音频起播超时(1500ms)，改用单调时钟继续");
                     }
                     audio_pending_ = false;
+                    audio_fallback_ = true;
+                    clock_.set_pos(pending_pos_);
                 } else {
                     return pending_pos_;
                 }
             }
+            if (audio_fallback_) return clock_.get();
             // 内容时间 = 硬件已播位置 × 倍率（2x 时设备走 1 秒，内容已播 2 秒）
             return audio_->get_played_seconds() * clock_.get_rate() + audio_offset_;
         }
@@ -94,6 +99,7 @@ void SyncEngine::seek(double target_seconds) {
 void SyncEngine::freeze_until_audio(double pos, uint64_t gen) {
     std::lock_guard<std::mutex> lock(audio_lock_);
     audio_pending_ = true;
+    audio_fallback_ = false;
     pending_pos_ = pos;
     pending_gen_ = gen;
     freeze_start_qpc_ = qpc_seconds();
@@ -105,6 +111,7 @@ bool SyncEngine::audio_resume(double first_pts, uint64_t gen) {
     std::lock_guard<std::mutex> lock(audio_lock_);
     if (!audio_pending_ || gen != pending_gen_) return false;  // 旧 seek 的帧不能锚定新 seek
     audio_pending_ = false;
+    audio_fallback_ = false;
     freeze_expired_logged_ = false;
     if (audio_ && audio_->is_active()) {
         // 以"写入位置"锚定：第一帧进入设备缓冲时主时钟 = pts - 缓冲延迟，
@@ -133,6 +140,7 @@ void SyncEngine::reset() {
     std::lock_guard<std::mutex> lock(audio_lock_);
     audio_offset_ = 0.0;
     audio_pending_ = false;
+    audio_fallback_ = false;
     clock_.reset();
 }
 
