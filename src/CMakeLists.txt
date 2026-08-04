@@ -1,4 +1,4 @@
-# ---- 把运行所需的 FFmpeg DLL 拷到 exe 旁 ----
+﻿# ---- 把运行所需的 FFmpeg DLL 拷到 exe 旁 ----
 function(copy_ffmpeg_dlls target)
     set(_dlls
         ${FFMPEG_ROOT}/bin/avcodec-62.dll
@@ -172,3 +172,11 @@ target_link_libraries(imgui PRIVATE d3d11 dxgi)
 # ---- WASAPI 端点诊断探针（tools/wasapi_probe.cpp） ----
 add_executable(wasapi_probe ../tools/wasapi_probe.cpp)
 target_link_libraries(wasapi_probe PRIVATE ole32 uuid mmdevapi)
+
+# ---- 桌面壁纸层诊断探针（tools/desktop_probe.cpp，Win10/24H2 结构排查） ----
+add_executable(desktop_probe
+    ../tools/desktop_probe.cpp
+    ui/desktop_utils.cpp
+)
+target_include_directories(desktop_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(desktop_probe PRIVATE user32)

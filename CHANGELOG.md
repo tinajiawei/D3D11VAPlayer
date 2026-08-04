@@ -1,5 +1,12 @@
 ﻿# 版本记录
 
+## v0.2.4（2026-08）— Win11 24H2 桌面新模型适配
+- WorkerW 查找兼容双模型：经典顶层路径（Win10/23H2）+ Progman 子窗口枚举（24H2 新模型）
+- 检测 Progman 的 WS_EX_NOREDIRECTIONBITMAP 判断新模型；自动维护 WorkerW 在 SHELLDLL_DefView 之下的 Z 序，并触发图标层重绘消除切换快照
+- 新增 DesktopLayerWatcher：监听 WorkerW/DefView 销毁与 Explorer 重启（TaskbarCreated），视频/网页壁纸自动重新挂载
+- 新增 wait_desktop_layer 轮询等待（24H2 的 WorkerW 可能延迟出现）
+- 新增 desktop_probe.exe 诊断工具：打印桌面层结构，便于远程排查
+
 ## v0.2.3（2026-08）— Win11 壁纸兼容增强
 - WorkerW 查找增强：枚举并打印全部 WorkerW 诊断（hwnd/vis/defview/矩形），Win11 备选放宽为“覆盖主屏幕或工作区”
 - 无可用 WorkerW 时回退 Progman，不再直接失败

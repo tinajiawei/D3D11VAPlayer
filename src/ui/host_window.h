@@ -1,10 +1,13 @@
-#pragma once
+﻿#pragma once
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <string>
 
 #include <windows.h>
+
+#include "ui/desktop_utils.h"
 
 namespace me {
 
@@ -40,10 +43,12 @@ public:
 
 private:
     static constexpr const wchar_t* kClassName = L"MediaEngineHostWindow";
+    static constexpr UINT kMsgWallpaperRemount = WM_APP + 0x201;
 
     static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT handle_message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     void handle_drop(WPARAM wp);
+    void remount_wallpaper();  // WorkerW 销毁/Explorer 重启后重新挂载
 
     HWND hwnd_ = nullptr;
     bool wallpaper_mode_ = false;
@@ -59,6 +64,7 @@ private:
     std::atomic<bool> left_down_{false};
     std::atomic<int> mouse_x_{0};
     std::atomic<int> mouse_y_{0};
+    std::unique_ptr<me::DesktopLayerWatcher> wallpaper_watcher_;
 };
 
 }  // namespace me

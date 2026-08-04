@@ -1,4 +1,4 @@
-#include "web/webview_wallpaper.h"
+﻿#include "web/webview_wallpaper.h"
 #include "ui/desktop_utils.h"
 
 #include <cstdio>
@@ -60,7 +60,13 @@ std::string WebViewWallpaper::url() const {
 
 bool WebViewWallpaper::create(HWND workerw, const RECT& rc, const std::string& url) {
     if (active()) return true;
-    if (!workerw) workerw = me::find_desktop_workerw();
+    me::DesktopLayer layer;
+    if (workerw) {
+        layer.workerw = workerw;
+    } else {
+        layer = me::wait_desktop_layer();
+        workerw = layer.workerw;
+    }
     if (!workerw) return false;
 
     {
@@ -79,10 +85,23 @@ bool WebViewWallpaper::create(HWND workerw, const RECT& rc, const std::string& u
         if (thread_.joinable()) thread_.join();
         return false;
     }
+
+    // 传入的 workerw 可能缺少 DefView 信息，补一次完整查找（新模型 Z 序需要）
+    if (!layer.defview) {
+        const me::DesktopLayer fresh = me::find_desktop_layer();
+        if (fresh.defview) layer = fresh;
+    }
+
+    // 监听桌面层销毁/重建：WorkerW 被销毁或 Explorer 重启时自动重新挂载
+    wallpaper_watcher_ = std::make_unique<me::DesktopLayerWatcher>();
+    wallpaper_watcher_->start(layer, [this] {
+        if (thread_id_) PostThreadMessageW(thread_id_, WM_APP + 1, kOpRemount, 0);
+    });
     return true;
 }
 
 void WebViewWallpaper::destroy() {
+    if (wallpaper_watcher_) { wallpaper_watcher_->stop(); wallpaper_watcher_.reset(); }
     if (thread_id_ && thread_.joinable()) {
         PostThreadMessageW(thread_id_, WM_APP + 1, kOpClose, 0);
         thread_.join();
@@ -221,12 +240,16 @@ void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url
 
     // 就绪后挂到 WorkerW 并铺满（窗口在本线程，SetParent 安全）
     if (thread_ready_.load() && workerw) {
-        workerw_ = workerw;
+        // 尽量取完整桌面层信息（新模型需要 DefView 做 Z 序）
+        me::DesktopLayer layer = me::find_desktop_layer();
+        if (!layer.ok()) layer.workerw = workerw;
+        workerw_ = layer.workerw;
+        me::ensure_workerw_zorder(layer);
         if (controller_) {
             // WebView2 不允许 SetParent 宿主窗口：用官方 put_ParentWindow 把内容挂到桌面层
-            const HRESULT pr = controller_->put_ParentWindow(workerw);
+            const HRESULT pr = controller_->put_ParentWindow(layer.workerw);
             RECT wrc = {};
-            GetClientRect(workerw, &wrc);
+            GetClientRect(layer.workerw, &wrc);
             controller_->put_Bounds(RECT{0, 0, wrc.right - wrc.left, wrc.bottom - wrc.top});
             std::fprintf(stderr, "[webview] 已挂载到 WorkerW: hr=0x%08X size=%dx%d\n",
                         static_cast<unsigned>(pr), wrc.right - wrc.left, wrc.bottom - wrc.top);
@@ -245,6 +268,7 @@ void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url
                     break;
                 }
                 case kOpResize: resize_thread(); break;
+                case kOpRemount: remount_thread(); break;
                 case kOpBack: if (webview_) webview_->GoBack(); break;
                 case kOpForward: if (webview_) webview_->GoForward(); break;
                 case kOpReload: if (webview_) webview_->Reload(); break;
@@ -282,6 +306,20 @@ void WebViewWallpaper::navigate_thread(const std::string& url) {
     std::wstring wurl(static_cast<size_t>(len > 0 ? len - 1 : 0), L'\0');
     if (len > 0) MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, wurl.data(), len);
     webview_->Navigate(wurl.c_str());
+}
+
+void WebViewWallpaper::remount_thread() {
+    if (!controller_) return;
+    const me::DesktopLayer layer = me::wait_desktop_layer(1500);
+    if (!layer.ok()) return;
+    workerw_ = layer.workerw;
+    me::ensure_workerw_zorder(layer);
+    const HRESULT pr = controller_->put_ParentWindow(layer.workerw);
+    RECT wrc = {};
+    GetClientRect(layer.workerw, &wrc);
+    controller_->put_Bounds(RECT{0, 0, wrc.right - wrc.left, wrc.bottom - wrc.top});
+    std::fprintf(stderr, "[webview] 桌面层重建后重新挂载: hr=0x%08X size=%dx%d\n",
+                 static_cast<unsigned>(pr), wrc.right - wrc.left, wrc.bottom - wrc.top);
 }
 
 void WebViewWallpaper::resize_thread() {

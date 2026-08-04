@@ -1,6 +1,7 @@
-#pragma once
+﻿#pragma once
 
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -9,6 +10,8 @@
 #include <wrl/client.h>
 
 #include "webview2.h"
+
+#include "ui/desktop_utils.h"
 
 namespace me {
 
@@ -33,11 +36,12 @@ public:
     void reload();
 
 private:
-    enum WebOp { kOpNavigate = 1, kOpClose, kOpResize, kOpBack, kOpForward, kOpReload };
+    enum WebOp { kOpNavigate = 1, kOpClose, kOpResize, kOpBack, kOpForward, kOpReload, kOpRemount };
 
     void thread_main(HWND workerw, RECT rc, const std::string& url);
     void navigate_thread(const std::string& url);  // 必须在 STA 线程内调用
     void resize_thread();                          // 必须在 STA 线程内调用
+    void remount_thread();                          // 桌面层重建后重新挂载（STA 线程内）
     std::wstring user_data_folder() const;
 
     static constexpr const wchar_t* kClassName = L"MediaEngineWebViewWindow";
@@ -54,6 +58,7 @@ private:
     Microsoft::WRL::ComPtr<ICoreWebView2Environment> env_;
     Microsoft::WRL::ComPtr<ICoreWebView2Controller> controller_;
     Microsoft::WRL::ComPtr<ICoreWebView2> webview_;
+    std::unique_ptr<me::DesktopLayerWatcher> wallpaper_watcher_;
 };
 
 }  // namespace me

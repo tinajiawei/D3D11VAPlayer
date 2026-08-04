@@ -1,5 +1,7 @@
-#include "ui/host_window.h"
+﻿#include "ui/host_window.h"
 #include "ui/desktop_utils.h"
+
+#include <cstdio>
 
 #include <shellapi.h>
 #include "imgui_impl_win32.h"
@@ -36,6 +38,7 @@ bool HostWindow::create(const std::wstring& title, int width, int height) {
 }
 
 void HostWindow::destroy() {
+    if (wallpaper_watcher_) { wallpaper_watcher_->stop(); wallpaper_watcher_.reset(); }
     if (hwnd_) {
         DestroyWindow(hwnd_);
         hwnd_ = nullptr;
@@ -46,8 +49,9 @@ void HostWindow::destroy() {
 
 bool HostWindow::enter_wallpaper_mode() {
     if (!hwnd_ || wallpaper_mode_) return wallpaper_mode_;
-    const HWND workerw = me::find_desktop_workerw();
-    if (!workerw) return false;
+    const me::DesktopLayer layer = me::wait_desktop_layer();
+    if (!layer.ok()) return false;
+    const HWND workerw = layer.workerw;
 
     // 保存原状，退出时恢复
     saved_style_ = GetWindowLongPtrW(hwnd_, GWL_STYLE);
@@ -59,6 +63,7 @@ bool HostWindow::enter_wallpaper_mode() {
     SetParent(hwnd_, workerw);
     SetWindowLongPtrW(hwnd_, GWL_STYLE,
                       WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN);
+    me::ensure_workerw_zorder(layer);
 
     // 铺满当前窗口所在显示器
     const HMONITOR monitor = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
@@ -76,11 +81,18 @@ bool HostWindow::enter_wallpaper_mode() {
     ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
     wallpaper_mode_ = true;
+
+    // 监听 WorkerW/DefView 销毁与 Explorer 重启：桌面层重建后自动重新挂载
+    wallpaper_watcher_ = std::make_unique<me::DesktopLayerWatcher>();
+    wallpaper_watcher_->start(layer, [this] {
+        if (hwnd_) PostMessageW(hwnd_, kMsgWallpaperRemount, 0, 0);
+    });
     return true;
 }
 
 void HostWindow::exit_wallpaper_mode() {
     if (!hwnd_ || !wallpaper_mode_) return;
+    if (wallpaper_watcher_) { wallpaper_watcher_->stop(); wallpaper_watcher_.reset(); }
     SetWindowLongPtrW(hwnd_, GWL_STYLE, saved_style_);
     SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, saved_exstyle_);
     SetParent(hwnd_, nullptr);
@@ -88,6 +100,36 @@ void HostWindow::exit_wallpaper_mode() {
     ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
     wallpaper_mode_ = false;
+}
+
+void HostWindow::remount_wallpaper() {
+    if (!hwnd_ || !wallpaper_mode_) return;
+    const me::DesktopLayer layer = me::wait_desktop_layer(1500);
+    if (!layer.ok()) {
+        std::fprintf(stderr, "[wallpaper] 桌面层重建后仍未找到 WorkerW，稍后重试\n");
+        return;
+    }
+    if (GetParent(hwnd_) != layer.workerw) {
+        SetParent(hwnd_, layer.workerw);
+        SetWindowLongPtrW(hwnd_, GWL_STYLE,
+                          WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN);
+        me::ensure_workerw_zorder(layer);
+        const HMONITOR monitor = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi = {};
+        mi.cbSize = sizeof(mi);
+        if (GetMonitorInfoW(monitor, &mi)) {
+            SetWindowPos(hwnd_, nullptr, mi.rcMonitor.left, mi.rcMonitor.top,
+                         mi.rcMonitor.right - mi.rcMonitor.left,
+                         mi.rcMonitor.bottom - mi.rcMonitor.top,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        ShowWindow(hwnd_, SW_SHOW);
+        UpdateWindow(hwnd_);
+        std::fprintf(stderr, "[wallpaper] 桌面层重建，已重新挂载 %p\n",
+                     static_cast<void*>(layer.workerw));
+    } else {
+        me::ensure_workerw_zorder(layer);
+    }
 }
 
 int HostWindow::take_mouse_wheel() {
@@ -145,6 +187,9 @@ LRESULT HostWindow::handle_message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_DESTROY:
             PostQuitMessage(0);
+            return 0;
+        case kMsgWallpaperRemount:
+            remount_wallpaper();
             return 0;
         default:
             if (on_app_message_ && on_app_message_(msg, wp, lp)) return 0;

@@ -1,4 +1,4 @@
-﻿MediaEngine v0.2.3 使用说明
+﻿MediaEngine v0.2.4 使用说明
 ================================
 
 一、快速开始
@@ -17,6 +17,7 @@
 
 三、目录结构
   media_player_app.exe   主程序
+  desktop_probe.exe       桌面壁纸层诊断（打印 WorkerW 结构，--watch 观察变化）
   media_engine.dll       引擎（编排 + C API）
   plugin\1\              解码器插件：decoder_sw / decoder_d3d11va / decoder_amf
   plugin\2\              后端插件：renderer（D3D11）/ audio（WASAPI）/ sync（同步）
@@ -40,8 +41,9 @@
 六、系统要求
   Windows 10/11 x64，DirectX 11，WebView2 Runtime（Win11 自带）
 
-七、壁纸模式排查（Win11）
-  壁纸模式依赖系统桌面 WorkerW 层，Win11 不同版本结构不同。
-  若“壁纸模式”失败，请用 media_player_app.exe --console 启动后再试，
-  控制台会打印 [workerw] hwnd=... vis=... defview=... rect=... 诊断；
-  把日志发回来即可定位。
+七、壁纸模式排查（Win11 24H2）
+  壁纸模式依赖系统桌面 WorkerW 层，Win11 24H2 起桌面结构有变化（WorkerW 变为 Progman
+  子窗口，切换壁纸后可能销毁）。若壁纸模式失败或桌面图标异常：
+  1. 用 media_player_app.exe --console 启动后再试，收集 [workerw] 日志；
+  2. 或直接运行 desktop_probe.exe --watch 5，把输出发回来定位。
+  v0.2.4 起会自动监听桌面层重建并重新挂载。
