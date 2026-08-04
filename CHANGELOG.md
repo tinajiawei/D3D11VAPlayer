@@ -1,5 +1,11 @@
 ﻿# 版本记录
 
+## v0.2.12（2026-08）— 网页壁纸实验增强：音频可视化 + 天气
+- 音频可视化桥：WASAPI 环回采集系统声音 → FFT → 256 个 0~1 频谱值 → 注入网页，模拟 Wallpaper Engine 的 wallpaperRegisterAudioListener（页面音频圈可随系统声音跳动）
+- 天气接入：页面内置 openspeech 接口已失效且无 CORS，改用 Open-Meteo（开放接口、免 key）+ WinINet 走系统代理拉取，注入页面 #weather 显示
+- 面板新增实验开关：“网页音频可视化(实验)”和“网页天气(实验)”+ 城市输入；CLI --web-enhance 一键开启
+- 本地验证：完美壁纸工程导航 success=1，天气“北京 33.8℃ 多云 35/26”正常更新
+
 ## v0.2.11（2026-08）— 本地网页壁纸支持
 - 网页壁纸可直接加载本地文件夹（如 Wallpaper Engine 创意工坊的 Web 壁纸工程）：填文件夹路径或 index.html 路径，或点“本地网页...”按钮选择文件夹
 - 用 WebView2 虚拟主机映射（SetVirtualHostNameToFolderMapping）加载本地页面：绕开 file:// 限制，中文路径可靠，页面相对资源（图片/音频/视频/JS）正常

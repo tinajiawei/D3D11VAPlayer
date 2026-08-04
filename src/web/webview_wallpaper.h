@@ -12,6 +12,7 @@
 #include "webview2.h"
 
 #include "ui/desktop_utils.h"
+#include "web/wallpaper_enhance.h"
 
 namespace me {
 
@@ -31,17 +32,23 @@ public:
 
     // 主线程调用：请求经线程消息投递到 STA 线程执行
     void navigate(const std::string& url);
+    // 实验增强：系统音频可视化（FFT 注入）+ 天气注入（默认关闭）
+    void set_audio_visualization(bool on);
+    void set_weather(bool on, const std::string& city);
     void go_back();
     void go_forward();
     void reload();
 
 private:
-    enum WebOp { kOpNavigate = 1, kOpClose, kOpResize, kOpBack, kOpForward, kOpReload, kOpRemount };
+    enum WebOp { kOpNavigate = 1, kOpClose, kOpResize, kOpBack, kOpForward, kOpReload, kOpRemount,
+                   kOpSpectrum = 0x51, kOpWeather = 0x52 };
 
     void thread_main(HWND workerw, RECT rc, const std::string& url);
     void navigate_thread(const std::string& url);  // 必须在 STA 线程内调用
     void resize_thread();                          // 必须在 STA 线程内调用
     void remount_thread();                          // 桌面层重建后重新挂载（STA 线程内）
+    void push_audio_spectrum();                     // 频谱注入页面（STA 线程内）
+    void push_weather();                            // 天气注入页面（STA 线程内）
     std::wstring user_data_folder() const;
 
     static constexpr const wchar_t* kClassName = L"MediaEngineWebViewWindow";
@@ -59,6 +66,11 @@ private:
     Microsoft::WRL::ComPtr<ICoreWebView2Controller> controller_;
     Microsoft::WRL::ComPtr<ICoreWebView2> webview_;
     std::unique_ptr<me::DesktopLayerWatcher> wallpaper_watcher_;
+    std::unique_ptr<me::WallpaperEnhance> enhance_;
+    std::atomic<bool> audio_vis_enabled_{false};
+    std::atomic<bool> weather_enabled_{false};
+    std::mutex weather_city_mutex_;
+    std::string weather_city_;
 };
 
 }  // namespace me

@@ -12,6 +12,9 @@ struct PanelRequest {
     bool wallpaper_toggle = false;
     bool web_wallpaper_toggle = false;
     bool web_pick_folder = false;  // 选择本地网页壁纸文件夹
+    int web_audio_vis = -1;   // 0/1：网页音频可视化(实验)
+    int web_weather = -1;    // 0/1：网页天气(实验)
+    std::string web_weather_city;
     std::string web_url;  // 请求切换壁纸模式
     int sequence_type = -1;      // >=0：用户切换了扫描类型（SequenceType）
     bool sequence_prev = false;
@@ -34,6 +37,9 @@ public:
 private:
     bool prefer_hw_ = true;
     char web_url_buf_[256] = {};
+    bool web_audio_vis_ = false;
+    bool web_weather_on_ = false;
+    char web_weather_city_[64] = "北京";
     std::string open_error_;  // 最近一次打开失败的原因（面板显示）
 };
 

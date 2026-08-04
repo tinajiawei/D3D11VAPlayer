@@ -58,6 +58,11 @@ std::atomic<int> g_seq_auto_next_change{-1};
 std::atomic<bool> g_seek_requested{false};
 std::atomic<double> g_seek_target{0.0};
 std::atomic<bool> g_web_pick_folder_requested{false};
+std::atomic<int> g_web_audio_vis{-1};
+std::atomic<int> g_web_weather{-1};
+std::mutex g_web_city_mutex;
+std::string g_web_city;
+bool g_web_enhance_cli = false;
 bool g_headless_cli = false;
 bool g_wallpaper_keep = false;   // --headless 无头模式（HeadlessRenderer + NullAudioSink）
 double g_run_seconds = 8.0;    // --run-seconds 无头运行结束时间
@@ -177,6 +182,12 @@ void present_callback(void*) {
         g_seek_target.store(requests.seek_target);
     }
     if (requests.web_pick_folder) g_web_pick_folder_requested.store(true);
+    if (requests.web_audio_vis >= 0) g_web_audio_vis.store(requests.web_audio_vis);
+    if (requests.web_weather >= 0) g_web_weather.store(requests.web_weather);
+    if (!requests.web_weather_city.empty()) {
+        std::lock_guard<std::mutex> lock(g_web_city_mutex);
+        g_web_city = requests.web_weather_city;
+    }
     // 播完自动下一个（壁纸模式同样生效：图片/视频轮播）
     if (g_sequence_auto_next.load() && g_controller.ended() && !g_controller.paused()) {
         g_seq_auto_requested.store(true);
@@ -455,6 +466,7 @@ int wmain(int argc, wchar_t** argv) {
         if (std::wstring(argv[i]) == L"--web-wallpaper" && i + 1 < argc) {
             web_wallpaper_url_cli = argv[i + 1];
         }
+        if (std::wstring(argv[i]) == L"--web-enhance") g_web_enhance_cli = true;
     }
     std::wstring first_media;
     for (int i = 1; i < argc; ++i) {
@@ -463,7 +475,7 @@ int wmain(int argc, wchar_t** argv) {
             ++i;  // 跳过带值的参数
             continue;
         }
-        if (arg == L"--pause-test" || arg == L"--wallpaper" || arg == L"--wallpaper-keep" || arg == L"--headless" || arg == L"--web-wallpaper" || arg == L"--capture-audio" || arg == L"--capture-screen") {
+        if (arg == L"--pause-test" || arg == L"--wallpaper" || arg == L"--wallpaper-keep" || arg == L"--headless" || arg == L"--web-wallpaper" || arg == L"--capture-audio" || arg == L"--capture-screen" || arg == L"--web-enhance") {
             continue;
         }
         if (arg == L"--reopen" && i + 1 < argc) {
@@ -667,6 +679,24 @@ int wmain(int argc, wchar_t** argv) {
                 const std::string url = g_web_wallpaper_url;
                 toggle_web_wallpaper(url);
             }
+        }
+        {
+            const int av = g_web_audio_vis.exchange(-1);
+            if (av >= 0) g_web_wallpaper.set_audio_visualization(av != 0);
+            const int we = g_web_weather.exchange(-1);
+            if (we >= 0) {
+                std::string city;
+                {
+                    std::lock_guard<std::mutex> lock(g_web_city_mutex);
+                    city = g_web_city;
+                }
+                g_web_wallpaper.set_weather(we != 0, city);
+            }
+        }
+        if (g_web_enhance_cli && g_web_wallpaper.active()) {
+            // 测试入口：--web-enhance 同时开启音频可视化 + 天气
+            g_web_wallpaper.set_audio_visualization(true);
+            g_web_wallpaper.set_weather(true, "北京");
         }
         if (g_open_requested.exchange(false)) {
             wchar_t file[MAX_PATH] = {};

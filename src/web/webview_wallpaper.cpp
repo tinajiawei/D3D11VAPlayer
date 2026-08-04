@@ -82,6 +82,29 @@ std::wstring make_file_url(const std::wstring& path) {
     return url;
 }
 
+// 网页增强注入脚本：在页面脚本执行前定义 WE 兼容的音频注册接口 + 天气更新入口
+const wchar_t* kEnhanceShimJs = LR"(
+if (!window.__meAudioCallbacks) {
+    window.__meAudioCallbacks = [];
+    window.wallpaperRegisterAudioListener = function(cb) {
+        if (typeof cb === 'function') window.__meAudioCallbacks.push(cb);
+    };
+    window.__meAudioPush = function(arr) {
+        for (var i = 0; i < window.__meAudioCallbacks.length; ++i) {
+            try { window.__meAudioCallbacks[i](arr); } catch (e) {}
+        }
+    };
+}
+// 页面脚本在 shim 注入前已执行：把页面暴露的全局监听器补注册进来
+if (window.wallpaperAudioListener) window.wallpaperRegisterAudioListener(window.wallpaperAudioListener);
+window.__meWeatherUpdate = function(p) {
+    var el = document.getElementById('weather');
+    if (!el) return;
+    var a = String(p).split('|');
+    el.style.display = 'block';
+    el.innerHTML = a[0] + ' ' + a[1] + '℃ ' + a[2] + '  ' + a[3] + '~' + a[4] + '℃ 风' + a[5];
+};
+)";
 }  // namespace
 std::wstring WebViewWallpaper::user_data_folder() const {
     // 用户数据目录必须用纯 ASCII 路径：WebView2 浏览器进程在非 ASCII 路径下可能启动失败（E_ABORT）
@@ -136,10 +159,28 @@ bool WebViewWallpaper::create(HWND workerw, const RECT& rc, const std::string& u
     wallpaper_watcher_->start(layer, [this] {
         if (thread_id_) PostThreadMessageW(thread_id_, WM_APP + 1, kOpRemount, 0);
     });
+
+    // 实验增强：音频可视化 / 天气（默认关闭，面板或 --web-enhance 开启）
+    enhance_ = std::make_unique<me::WallpaperEnhance>();
+    enhance_->set_webview_thread(thread_id_);
+    if (audio_vis_enabled_.load()) enhance_->set_audio_enabled(true);
+    if (weather_enabled_.load()) {
+        std::string city;
+        {
+            std::lock_guard<std::mutex> lock(weather_city_mutex_);
+            city = weather_city_;
+        }
+        enhance_->set_weather_enabled(true, city.empty() ? "北京" : city);
+    }
     return true;
 }
 
 void WebViewWallpaper::destroy() {
+    if (enhance_) {
+        enhance_->set_audio_enabled(false);
+        enhance_->set_weather_enabled(false, {});
+        enhance_.reset();
+    }
     if (wallpaper_watcher_) { wallpaper_watcher_->stop(); wallpaper_watcher_.reset(); }
     if (thread_id_ && thread_.joinable()) {
         PostThreadMessageW(thread_id_, WM_APP + 1, kOpClose, 0);
@@ -172,6 +213,20 @@ void WebViewWallpaper::go_forward() {
 
 void WebViewWallpaper::reload() {
     if (thread_id_) PostThreadMessageW(thread_id_, WM_APP + 1, kOpReload, 0);
+}
+
+void WebViewWallpaper::set_audio_visualization(bool on) {
+    audio_vis_enabled_.store(on);
+    if (enhance_) enhance_->set_audio_enabled(on);
+}
+
+void WebViewWallpaper::set_weather(bool on, const std::string& city) {
+    weather_enabled_.store(on);
+    {
+        std::lock_guard<std::mutex> lock(weather_city_mutex_);
+        weather_city_ = city;
+    }
+    if (enhance_) enhance_->set_weather_enabled(on, city.empty() ? "北京" : city);
 }
 
 void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url) {
@@ -242,12 +297,15 @@ void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url
                                 EventRegistrationToken nav_token = {};
                                 webview_->add_NavigationCompleted(
                                     Microsoft::WRL::Callback<ICoreWebView2NavigationCompletedEventHandler>(
-                                        [](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+                                        [this](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
                                             BOOL ok = FALSE;
                                             COREWEBVIEW2_WEB_ERROR_STATUS status = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
                                             args->get_IsSuccess(&ok);
                                             args->get_WebErrorStatus(&status);
                                             std::fprintf(stderr, "[webview] 导航完成 success=%d err=%d\\n", ok ? 1 : 0, static_cast<int>(status));
+                                            // 旧版 SDK 没有 AddScriptToExecuteOnDocumentCreatedAsync：
+                                            // 导航成功后注入 WE 兼容 shim 并补注册页面全局音频监听器
+                                            if (ok && webview_) webview_->ExecuteScript(kEnhanceShimJs, nullptr);
                                             return S_OK;
                                         }).Get(), &nav_token);
                                 thread_ready_.store(true);
@@ -320,6 +378,8 @@ void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url
                 }
                 case kOpResize: resize_thread(); break;
                 case kOpRemount: remount_thread(); break;
+                case kOpSpectrum: push_audio_spectrum(); break;
+                case kOpWeather: push_weather(); break;
                 case kOpBack: if (webview_) webview_->GoBack(); break;
                 case kOpForward: if (webview_) webview_->GoForward(); break;
                 case kOpReload: if (webview_) webview_->Reload(); break;
@@ -409,6 +469,28 @@ void WebViewWallpaper::navigate_thread(const std::string& url) {
     webview_->Navigate(wurl.c_str());
 }
 
+void WebViewWallpaper::push_audio_spectrum() {
+    if (!webview_) return;
+    const std::vector<float> spec = enhance_ ? enhance_->take_spectrum() : std::vector<float>{};
+    if (spec.empty()) return;
+    std::string js = "window.__meAudioPush&&window.__meAudioPush([";
+    for (size_t i = 0; i < spec.size(); ++i) {
+        char buf[24] = {};
+        std::snprintf(buf, sizeof(buf), "%g", spec[i]);
+        js += buf;
+        if (i + 1 < spec.size()) js += ',';
+    }
+    js += "]);";
+    webview_->ExecuteScript(wide_from_utf8(js).c_str(), nullptr);
+}
+
+void WebViewWallpaper::push_weather() {
+    if (!webview_ || !enhance_) return;
+    const std::string payload = enhance_->take_weather_payload();
+    if (payload.empty()) return;
+    const std::string js = "window.__meWeatherUpdate&&window.__meWeatherUpdate('" + payload + "');";
+    webview_->ExecuteScript(wide_from_utf8(js).c_str(), nullptr);
+}
 void WebViewWallpaper::remount_thread() {
     if (!controller_) return;
     const me::DesktopLayer layer = me::wait_desktop_layer(1500);

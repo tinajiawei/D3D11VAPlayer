@@ -1,4 +1,4 @@
-﻿MediaEngine v0.2.11 使用说明
+﻿MediaEngine v0.2.12 使用说明
 ================================
 
 一、快速开始
@@ -19,7 +19,9 @@
 5. 退出：右键托盘图标 → 网页壁纸（或再次操作面板）
 6. 控制台会打印 [webview] 导航完成 success=1 err=0，可据此判断网页是否打开
    建议先试 https://www.bing.com 或本地页面；部分网站（如百度）可能因反爬返回空页
-   注意：网页里依赖系统音频可视化的特效（Wallpaper Engine 专属 API）在 WebView2 下不响应
+   注意：旧版依赖系统音频可视化的特效默认不响应；勾选面板"网页音频可视化(实验)"后，
+   程序会用 WASAPI 环回采集系统声音并注入页面（音频圈随声音跳动）
+   天气：勾选"网页天气(实验)"并输入城市（默认北京），程序从 Open-Meteo 拉取并显示
 
 三、目录结构
   media_player_app.exe   主程序
@@ -38,6 +40,7 @@
   media_player_app.exe 文件路径           直接播放
   media_player_app.exe --hw 文件         优先硬解（D3D11VA/AMF）
   media_player_app.exe --web-wallpaper URL  网页壁纸
+  media_player_app.exe --web-wallpaper 路径 --web-enhance  网页壁纸 + 音频可视化/天气（实验）
   media_player_app.exe --wallpaper --wallpaper-keep 文件  持续视频壁纸（watchdog 用）
   media_player_app.exe --capture-screen 5  屏幕采集演示
   media_player_app.exe --console         显示控制台窗口（默认隐藏）
