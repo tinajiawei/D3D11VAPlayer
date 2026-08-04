@@ -97,7 +97,10 @@ void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, 
         }
 
         float volume = controller.volume();
+        const float vol_before = volume;
+        const float wheel_before = ImGui::GetIO().MouseWheel;
         if (ImGui::SliderFloat("音量", &volume, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_NoInput)) {
+            if (ImGui::IsItemHovered() && wheel_before != 0.0f) volume = vol_before;  // 滚轮误触不改音量
             std::fprintf(stderr, "[panel] volume set %.2f\n", volume);
             controller.set_volume(volume);
         }

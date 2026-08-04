@@ -128,8 +128,9 @@ LRESULT HostWindow::handle_message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_KEYDOWN:
             // 先喂给 ImGui（主窗口面板的输入框需要键盘事件），未被消费才走快捷键
-            if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 0;
-            if (on_key_) on_key_(static_cast<unsigned>(wp));
+            ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);  // 先喂给 ImGui
+            // 输入框激活时（WantCaptureKeyboard）快捷键不执行，否则 M 会静音、空格会暂停
+            if (on_key_ && !ImGui::GetIO().WantCaptureKeyboard) on_key_(static_cast<unsigned>(wp));
             return 0;
         case WM_KEYUP:
         case WM_CHAR:
