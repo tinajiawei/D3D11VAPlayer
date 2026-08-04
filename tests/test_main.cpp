@@ -1,4 +1,4 @@
-#include "test_common.h"
+﻿#include "test_common.h"
 
 #include <cstring>
 #include <cstdio>
@@ -16,6 +16,7 @@ int main(int argc, char** argv) {
     if (!only_ring && !only_clock)  { test_frame_queue(); }
     if (!only_ring && !only_clock)  { test_headless_renderer(); }
     if (!only_ring && !only_clock)  { test_null_audio_sink(); }
+    if (!only_ring && !only_clock)  { test_sequence(); }
 
     std::fprintf(stderr, "DONE\n");
     std::fflush(stderr);

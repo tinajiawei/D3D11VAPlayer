@@ -129,6 +129,7 @@ add_executable(media_player_app
     ui/control_panel.cpp
     ui/panel_window.cpp
     ui/floating_panel.cpp
+    ui/media_sequence.cpp
     ui/desktop_utils.cpp
     ui/tray_icon.cpp
     ui/main.cpp
@@ -137,7 +138,7 @@ add_executable(media_player_app
     capture/screen_capture.cpp
     capture/capture_preview.cpp
 )
-target_link_libraries(media_player_app PRIVATE media_engine imgui user32 gdi32 shell32 comdlg32 mmdevapi ole32 uuid)
+target_link_libraries(media_player_app PRIVATE media_engine imgui user32 gdi32 shell32 comdlg32 mmdevapi ole32 uuid shlwapi)
 target_include_directories(media_player_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/webview2/include)
 target_link_libraries(media_player_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/webview2/lib/x64/WebView2LoaderStatic.lib)
 copy_ffmpeg_dlls(media_player_app)

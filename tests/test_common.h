@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +32,7 @@ void test_queues();
 void test_frame_queue();
 void test_headless_renderer();
 void test_null_audio_sink();
+void test_sequence();
 
 inline int run_all_tests() {
     test_ring_buffer();
@@ -40,6 +41,7 @@ inline int run_all_tests() {
     test_frame_queue();
     test_headless_renderer();
     test_null_audio_sink();
+    test_sequence();
     if (g_failures == 0) {
         std::fprintf(stderr, "ALL TESTS PASSED\n");
         return 0;

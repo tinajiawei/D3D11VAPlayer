@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "ui/media_sequence.h"
 #include "ui/playback_controller.h"
 
 namespace me {
@@ -11,6 +12,10 @@ struct PanelRequest {
     bool wallpaper_toggle = false;
     bool web_wallpaper_toggle = false;
     std::string web_url;  // 请求切换壁纸模式
+    int sequence_type = -1;      // >=0：用户切换了扫描类型（SequenceType）
+    bool sequence_prev = false;
+    bool sequence_next = false;
+    int sequence_auto_next = -1; // 0/1：用户切换了自动播放下一个
 };
 
 // Dear ImGui 控制面板（docs/00）：可隐藏（H 键），只通过 PlaybackController 交互。
@@ -18,7 +23,7 @@ class ControlPanel {
 public:
     // 在渲染线程每帧调用
     void draw(PlaybackController& controller, PanelRequest& requests, bool* show_panel,
-             bool wallpaper_mode);
+             bool wallpaper_mode, const SequenceInfo& seq);
     void set_open_error(const std::string& message) { open_error_ = message; }
     std::string web_url() const { return web_url_buf_; }
 

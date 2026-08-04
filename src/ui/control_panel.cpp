@@ -9,7 +9,7 @@ namespace me {
 
     static std::string g_audio_error;  // 音频设备切换失败提示
 void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, bool* show_panel,
-                          bool wallpaper_mode) {
+                          bool wallpaper_mode, const SequenceInfo& seq) {
     // 音频设备列表缓存（2 秒刷新一次，避免每帧枚举 COM 设备）
     static std::vector<std::string> g_devices;
     static double g_dev_refresh = 0.0;
@@ -60,6 +60,35 @@ void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, 
     if (ImGui::Button("网页壁纸")) {
         requests.web_wallpaper_toggle = true;
         requests.web_url = web_url_buf_;
+    }
+
+    ImGui::Separator();
+    ImGui::Text("序列播放（文件夹+子文件夹）");
+    static const char* kSeqTypeNames[] = {"视频", "图片", "全部"};
+    const int seq_type = seq.type >= 0 && seq.type <= 2 ? seq.type : 0;
+    if (ImGui::BeginCombo("扫描类型", kSeqTypeNames[seq_type])) {
+        for (int i = 0; i < 3; ++i) {
+            if (ImGui::Selectable(kSeqTypeNames[i], i == seq_type)) requests.sequence_type = i;
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (seq.count > 0 && seq.index >= 0) {
+        ImGui::Text("%d/%d", seq.index + 1, seq.count);
+    } else {
+        ImGui::TextDisabled("未扫描");
+    }
+    ImGui::BeginDisabled(seq.count < 2 || seq.index <= 0);
+    if (ImGui::Button("上一个")) requests.sequence_prev = true;
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(seq.count < 2 || seq.index < 0 || seq.index >= seq.count - 1);
+    if (ImGui::Button("下一个")) requests.sequence_next = true;
+    ImGui::EndDisabled();
+    bool auto_next = seq.auto_next;
+    if (ImGui::Checkbox("播放完自动下一个", &auto_next)) requests.sequence_auto_next = auto_next ? 1 : 0;
+    if (!seq.current_name.empty()) {
+        ImGui::TextWrapped("%s", seq.current_name.c_str());
     }
 
     if (!open_error_.empty()) {

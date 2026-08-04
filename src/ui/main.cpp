@@ -25,6 +25,7 @@
 #include "capture/capture_preview.h"
 #include "capture/loopback_capture.h"
 #include "ui/host_window.h"
+#include "ui/media_sequence.h"
 #include "ui/playback_controller.h"
 
 namespace {
@@ -43,6 +44,16 @@ bool g_show_panel = true;
 std::atomic<bool> g_open_requested{false};
 std::atomic<bool> g_open_prefer_hw{false};
 std::atomic<bool> g_wallpaper_requested{false};
+me::MediaSequence g_sequence;
+std::atomic<int> g_sequence_type{0};           // SequenceType
+std::atomic<bool> g_sequence_auto_next{false};
+std::mutex g_current_mutex;
+std::wstring g_current_media;
+std::atomic<bool> g_seq_prev_requested{false};
+std::atomic<bool> g_seq_next_requested{false};
+std::atomic<bool> g_seq_auto_requested{false};
+std::atomic<int> g_seq_type_requested{-1};
+std::atomic<int> g_seq_auto_next_change{-1};
 bool g_headless_cli = false;
 bool g_wallpaper_keep = false;   // --headless 无头模式（HeadlessRenderer + NullAudioSink）
 double g_run_seconds = 8.0;    // --run-seconds 无头运行结束时间
@@ -65,6 +76,11 @@ void open_media(const std::wstring& path, bool prefer_hw) {
         g_panel.set_open_error(err.message());
     } else {
         g_panel.set_open_error({});
+        {
+            std::lock_guard<std::mutex> lock(g_current_mutex);
+            g_current_media = path;
+        }
+        g_sequence.rebuild(path, static_cast<me::SequenceType>(g_sequence_type.load()));
     }
 }
 
@@ -136,15 +152,25 @@ void present_callback(void*) {
 
     me::PanelRequest requests;
     const bool wallpaper_mode = g_window.wallpaper_mode();
+    const me::SequenceInfo seq = g_sequence.snapshot(
+        static_cast<me::SequenceType>(g_sequence_type.load()), g_sequence_auto_next.load());
     if (g_floating_panel.active() || g_floating_panel.pending()) {
-        g_floating_panel.render(g_panel, g_controller, requests, &g_show_panel, wallpaper_mode);
+        g_floating_panel.render(g_panel, g_controller, requests, &g_show_panel, wallpaper_mode, seq);
     } else {
-        g_panel.draw(g_controller, requests, &g_show_panel, wallpaper_mode);
+        g_panel.draw(g_controller, requests, &g_show_panel, wallpaper_mode, seq);
     }
     g_open_prefer_hw.store(requests.prefer_hw);  // 勾选/取消后立即生效：拖入新文件也用这个值
     if (requests.wallpaper_toggle) g_wallpaper_requested.store(true);
     if (requests.open_file) {
         g_open_requested.store(true);
+    }
+    if (requests.sequence_prev) g_seq_prev_requested.store(true);
+    if (requests.sequence_next) g_seq_next_requested.store(true);
+    if (requests.sequence_type >= 0) g_seq_type_requested.store(requests.sequence_type);
+    if (requests.sequence_auto_next >= 0) g_seq_auto_next_change.store(requests.sequence_auto_next);
+    // 播完自动下一个（壁纸模式同样生效：图片/视频轮播）
+    if (g_sequence_auto_next.load() && g_controller.ended() && !g_controller.paused()) {
+        g_seq_auto_requested.store(true);
     }
 
     if (requests.web_wallpaper_toggle) {
@@ -569,6 +595,36 @@ int wmain(int argc, wchar_t** argv) {
             }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
+        }
+        {
+            const int auto_change = g_seq_auto_next_change.exchange(-1);
+            if (auto_change >= 0) g_sequence_auto_next.store(auto_change != 0);
+        }
+        {
+            const int type_change = g_seq_type_requested.exchange(-1);
+            if (type_change >= 0) {
+                g_sequence_type.store(type_change);
+                std::wstring cur;
+                {
+                    std::lock_guard<std::mutex> lock(g_current_mutex);
+                    cur = g_current_media;
+                }
+                if (!cur.empty()) {
+                    g_sequence.rebuild(cur, static_cast<me::SequenceType>(type_change));
+                }
+            }
+        }
+        if (g_seq_prev_requested.exchange(false)) {
+            std::wstring p;
+            if (g_sequence.prev(p)) open_media(p, g_open_prefer_hw.load());
+        }
+        if (g_seq_next_requested.exchange(false)) {
+            std::wstring p;
+            if (g_sequence.next(p)) open_media(p, g_open_prefer_hw.load());
+        }
+        if (g_seq_auto_requested.exchange(false)) {
+            std::wstring p;
+            if (g_sequence.next(p)) open_media(p, g_open_prefer_hw.load());
         }
         if (g_wallpaper_requested.exchange(false)) toggle_wallpaper();
         {
