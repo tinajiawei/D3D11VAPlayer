@@ -224,9 +224,17 @@ void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url
 
     // 就绪后挂到 WorkerW 并铺满（窗口在本线程，SetParent 安全）
     if (thread_ready_.load() && workerw) {
-        SetParent(hwnd, workerw);
-        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-        resize_thread();
+        workerw_ = workerw;
+        if (controller_) {
+            // WebView2 不允许 SetParent 宿主窗口：用官方 put_ParentWindow 把内容挂到桌面层
+            const HRESULT pr = controller_->put_ParentWindow(workerw);
+            RECT wrc = {};
+            GetClientRect(workerw, &wrc);
+            controller_->put_Bounds(RECT{0, 0, wrc.right - wrc.left, wrc.bottom - wrc.top});
+            std::fprintf(stderr, "[webview] 已挂载到 WorkerW: hr=0x%08X size=%dx%d\n",
+                        static_cast<unsigned>(pr), wrc.right - wrc.left, wrc.bottom - wrc.top);
+        }
+        ShowWindow(hwnd, SW_HIDE);  // 空容器隐藏，内容窗口已挂到桌面层
     }
 
     // 消息泵：处理导航/操作请求与 WebView2 内部消息
@@ -265,6 +273,14 @@ void WebViewWallpaper::navigate_thread(const std::string& url) {
         webview_->NavigateToString(kDemoHtml);
         return;
     }
+    // 无协议前缀时自动补全 https://（用户常输入 www.baidu.com）
+    std::string fixed = url;
+    if (fixed.find("://") == std::string::npos &&
+        fixed.compare(0, 6, "about:") != 0 &&
+        fixed.compare(0, 5, "data:") != 0 &&
+        fixed.compare(0, 7, "file://") != 0) {
+        fixed = "https://" + fixed;
+    }
     const int len = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, nullptr, 0);
     std::wstring wurl(static_cast<size_t>(len > 0 ? len - 1 : 0), L'\0');
     if (len > 0) MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, wurl.data(), len);
@@ -272,9 +288,11 @@ void WebViewWallpaper::navigate_thread(const std::string& url) {
 }
 
 void WebViewWallpaper::resize_thread() {
-    if (!controller_ || !hwnd_.load()) return;
+    if (!controller_) return;
+    const HWND target = workerw_ ? workerw_ : hwnd_.load();
+    if (!target) return;
     RECT rc = {};
-    GetClientRect(GetParent(hwnd_.load()), &rc);
+    GetClientRect(target, &rc);
     controller_->put_Bounds(RECT{0, 0, rc.right - rc.left, rc.bottom - rc.top});
 }
 

@@ -44,6 +44,7 @@ private:
     static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 
     std::atomic<HWND> hwnd_{nullptr};
+    HWND workerw_ = nullptr;  // 桌面层（仅 STA 线程使用）
     std::thread thread_;
     std::atomic<bool> thread_ready_{false};
     std::atomic<bool> thread_failed_{false};

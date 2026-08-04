@@ -118,6 +118,7 @@ void toggle_web_wallpaper(const std::string& url) {
 }
 
 void present_callback(void*) {
+    if (!ImGui::GetCurrentContext()) return;  // 引擎空转渲染线程可能先于 ImGui 初始化启动
     ImGuiIO& io = ImGui::GetIO();
     io.AddMousePosEvent(static_cast<float>(g_window.mouse_x()),
                          static_cast<float>(g_window.mouse_y()));
