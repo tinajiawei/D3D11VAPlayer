@@ -1,4 +1,4 @@
-#include "ui/floating_panel.h"
+﻿#include "ui/floating_panel.h"
 
 #include <cstdio>
 
@@ -71,7 +71,8 @@ bool FloatingPanel::create_impl(HINSTANCE instance, ID3D11Device* device,
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;  // 面板位置固定，不写 ini
     const ImFontConfig font_cfg{};
-    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc", 18.0f,
+    const float dpi_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(window_.handle());
+    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc", 18.0f * dpi_scale,
                                  &font_cfg, io.Fonts->GetGlyphRangesChineseFull());
     ImGui_ImplWin32_Init(window_.handle());
     ImGui_ImplDX11_Init(device, context);

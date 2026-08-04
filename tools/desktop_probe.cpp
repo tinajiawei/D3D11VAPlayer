@@ -8,7 +8,21 @@
 
 #include <windows.h>
 
+static void enable_dpi_awareness() {
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (!user32) return;
+    using SetCtxFn = BOOL(WINAPI*)(DPI_AWARENESS_CONTEXT);
+    auto set_ctx = reinterpret_cast<SetCtxFn>(
+        GetProcAddress(user32, "SetProcessDpiAwarenessContext"));
+    if (set_ctx) {
+        set_ctx(reinterpret_cast<DPI_AWARENESS_CONTEXT>(static_cast<INT_PTR>(-4)));  // PER_MONITOR_AWARE_V2
+        return;
+    }
+    SetProcessDPIAware();
+}
+
 int main(int argc, char** argv) {
+    enable_dpi_awareness();
     int watch_seconds = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];

@@ -195,6 +195,14 @@ LRESULT HostWindow::handle_message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
+        case WM_DPICHANGED: {
+            // 跨 DPI 显示器移动时按系统建议矩形调整
+            const RECT* rc = reinterpret_cast<const RECT*>(lp);
+            SetWindowPos(hwnd, nullptr, rc->left, rc->top,
+                         rc->right - rc->left, rc->bottom - rc->top,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+            return 0;
+        }
         case kMsgWallpaperRemount:
             remount_wallpaper();
             return 0;

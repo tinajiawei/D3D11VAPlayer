@@ -273,6 +273,8 @@ LONG WINAPI crash_handler(EXCEPTION_POINTERS* ep) {
 }
 
 int wmain(int argc, wchar_t** argv) {
+    // 必须在创建任何窗口前启用：高 DPI 屏幕按物理像素渲染（壁纸分辨率修复）
+    ImGui_ImplWin32_EnableDpiAwareness();
     // 默认隐藏控制台窗口；--debug / --console 时显示（日志仍写入 stderr）
     bool show_console = false;
     for (int i = 1; i < argc; ++i) {
@@ -361,7 +363,8 @@ int wmain(int argc, wchar_t** argv) {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = "media_engine_imgui.ini";
     const ImFontConfig font_cfg{};
-    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc", 18.0f,
+    const float dpi_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(g_window.handle());
+    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc", 18.0f * dpi_scale,
                                  &font_cfg, io.Fonts->GetGlyphRangesChineseFull());
     ImGui_ImplWin32_Init(g_window.handle());
     ImGui_ImplDX11_Init(static_cast<ID3D11Device*>(me_get_d3d11_device(g_engine)),
