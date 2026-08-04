@@ -131,6 +131,7 @@ LRESULT HostWindow::handle_message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 0;
             if (on_key_) on_key_(static_cast<unsigned>(wp));
             return 0;
+        case WM_KEYUP:
         case WM_CHAR:
         case WM_SYSKEYDOWN:
         case WM_SYSKEYUP:
