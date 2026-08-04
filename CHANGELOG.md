@@ -1,0 +1,28 @@
+# 版本记录
+
+## v0.2.0（2026-08）— 二期完成：动态壁纸 + 模块化
+
+### 新功能（M1–M7）
+- M1 接口桩：HeadlessRenderer / NullAudioSink / `--headless` 无窗口回归
+- M2 壁纸 UX：浮层控制面板（置顶可输入）、位置记忆、托盘图标
+- M3 模块 DLL 化：渲染 plugin\2\renderer.dll、音频 plugin\2\audio.dll、同步 plugin\2\sync.dll
+- M4 网页壁纸：WebView2（专用 STA 线程 + put_ParentWindow 挂桌面层），内置演示页，自动补全 https
+- M5 更多硬解：AMF 插件 decoder_amf.dll（HEVC/H.264），`ME_HW_BACKEND` 可选后端
+- M6 采集：WASAPI loopback 音频采集（--capture-audio）、DXGI 屏幕采集（--capture-screen）
+- M7 稳定性：壁纸崩溃自动恢复 watchdog、--wallpaper-keep、崩溃日志、软硬解性能对比
+
+### 修复
+- JPG/image2 探测后 seek 复位导致不渲染
+- 10bit HEVC（P010）硬解帧拷贝失败
+- 切换/seek 后硬解解码器错误状态卡死（自动重建）
+- 壁纸模式切换文件失败后面板消失（空转渲染）
+- 控制面板输入框无法输入 / 字符被持续删除（WM_KEYUP 缺失）
+- 输入框激活时快捷键泄漏（M 静音 / 空格暂停）
+- 隐藏控制面板残留黑框
+- WebView2 与音频 MTA/STA 冲突（0x80010106）
+- 主窗口普通模式无面板（引擎创建即空转渲染）
+
+## v0.1.0（2026-07）— 一期：可播放的媒体引擎
+- 解封装/解码/渲染/音频输出/音视频同步全管线
+- H.264/HEVC 软硬解、AV1 软解、图片/GIF/WebP
+- 壁纸原型（WorkerW 挂载）
