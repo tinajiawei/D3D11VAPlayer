@@ -1,5 +1,10 @@
 ﻿# 版本记录
 
+## v0.2.13（2026-08）— 本地网页壁纸布局修复
+- 修复“完美壁纸”类网页壁纸时间/日期/天气叠在一起：这类页面依赖 Wallpaper Engine 注入布局属性，未注入时三个元素默认都叠在屏幕中心
+- 本地网页加载后自动注入 project.json 默认属性（时间居中、日期偏下 4%、天气关闭、字号按默认值）
+- 验证：注入后 clock=0%/64px、date=4%/54px、weather=none，布局正常
+
 ## v0.2.12（2026-08）— 网页壁纸实验增强：音频可视化 + 天气
 - 音频可视化桥：WASAPI 环回采集系统声音 → FFT → 256 个 0~1 频谱值 → 注入网页，模拟 Wallpaper Engine 的 wallpaperRegisterAudioListener（页面音频圈可随系统声音跳动）
 - 天气接入：页面内置 openspeech 接口已失效且无 CORS，改用 Open-Meteo（开放接口、免 key）+ WinINet 走系统代理拉取，注入页面 #weather 显示

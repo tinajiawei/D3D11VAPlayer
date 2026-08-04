@@ -104,6 +104,31 @@ window.__meWeatherUpdate = function(p) {
     el.style.display = 'block';
     el.innerHTML = a[0] + ' ' + a[1] + '℃ ' + a[2] + '  ' + a[3] + '~' + a[4] + '℃ 风' + a[5];
 };
+// 注入本工程 project.json 的默认布局属性（时间居中/日期偏下/天气关），
+// 否则时间、日期、天气三个元素默认都叠在屏幕中心
+(function() {
+    var p = {
+        showTime: {value: true}, showDate: {value: true},
+        tSize: {value: 18}, DateSize: {value: 15},
+        tX: {value: 50}, tY: {value: 50},
+        DateX: {value: 50}, DateY: {value: 54},
+        weather_show: {value: false},
+        timetransparency: {value: 100},
+        TimeColor: {value: '1 1 1'}, TimeBlurColor: {value: '1 0.8 0.8'},
+        showSakura: {value: true}
+    };
+    if (window.wallpaperPropertyListener && window.wallpaperPropertyListener.applyUserProperties) {
+        window.wallpaperPropertyListener.applyUserProperties(p);
+    }
+    var c = document.getElementById('clock');
+    var d = document.getElementById('oDate');
+    var w = document.getElementById('weather');
+    return JSON.stringify({
+        clock: c ? (c.style.top + '/' + c.style.fontSize) : 'missing',
+        date: d ? (d.style.top + '/' + d.style.fontSize) : 'missing',
+        weather: w ? w.style.display : 'missing'
+    });
+})();
 )";
 }  // namespace
 std::wstring WebViewWallpaper::user_data_folder() const {
@@ -305,7 +330,15 @@ void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url
                                             std::fprintf(stderr, "[webview] 导航完成 success=%d err=%d\\n", ok ? 1 : 0, static_cast<int>(status));
                                             // 旧版 SDK 没有 AddScriptToExecuteOnDocumentCreatedAsync：
                                             // 导航成功后注入 WE 兼容 shim 并补注册页面全局音频监听器
-                                            if (ok && webview_) webview_->ExecuteScript(kEnhanceShimJs, nullptr);
+                                            if (ok && webview_) {
+                                                webview_->ExecuteScript(
+                                                    kEnhanceShimJs,
+                                                    Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+                                                        [](HRESULT, LPCWSTR result) -> HRESULT {
+                                                            if (result && *result) std::fprintf(stderr, "[webview] 布局注入结果: %ls\n", result);
+                                                            return S_OK;
+                                                        }).Get());
+                                            }
                                             return S_OK;
                                         }).Get(), &nav_token);
                                 thread_ready_.store(true);
