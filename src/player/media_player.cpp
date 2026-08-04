@@ -31,6 +31,20 @@ constexpr double kSpeedMax = 4.0;
 MediaPlayer::~MediaPlayer() { close(); }
 
 Error MediaPlayer::open(const std::string& path, bool prefer_hw) {
+    const Error err = open_impl(path, prefer_hw);
+    if (!err.ok()) {
+        // 失败兜底：启动空转渲染线程，保持控制面板/浮层刷新
+        // （壁纸模式下切换文件失败时，面板依赖渲染线程的 present 回调）
+        if (renderer_ && !running_.load()) {
+            running_.store(true);
+            render_thread_ = std::thread(&MediaPlayer::render_loop, this);
+            ME_LOG_WARN("媒体打开失败，已启动空转渲染线程保持面板刷新: ", err.message());
+        }
+    }
+    return err;
+}
+
+Error MediaPlayer::open_impl(const std::string& path, bool prefer_hw) {
     if (!sync_) return Error::make(Err::MediaOpenFailed, "同步引擎不可用（sync 插件未注入）");
     close();
 
@@ -103,7 +117,11 @@ Error MediaPlayer::open(const std::string& path, bool prefer_hw) {
         }
         // 探测消耗了解码器状态和源位置，全部复位
         video_decoder_->flush();
-        avformat_seek_file(source_.context(), -1, INT64_MIN, 0, 0, AVSEEK_FLAG_BACKWARD);
+        source_.close();
+        {
+            const Error reopen_err = source_.open(path);
+            if (!reopen_err.ok()) return reopen_err;
+        }
         if (video_rotation_ != 0) {
             ME_LOG_INFO("帧侧数据显示旋转: ", video_rotation_, " 度");
         }
@@ -299,8 +317,10 @@ void MediaPlayer::demux_loop() {
         const uint64_t g = seek_gen_.load();
         if (g != demux_gen) demux_gen = g;
         const uint64_t pgen = demux_gen;  // 这批包的代数：期间发生 seek 则旧包作废
+        ME_LOG_DEBUG("[demux] before read");
         AvPacketPtr packet;
         Error err = source_.read_packet(packet);
+        ME_LOG_DEBUG("[demux] after read ok=", err.ok(), " pkt=", (bool)packet);
         if (!err.ok()) {
             ME_LOG_ERROR("读包失败: ", err.message());
             video_packets_.push(nullptr, pgen);
@@ -317,6 +337,7 @@ void MediaPlayer::demux_loop() {
             continue;
         }
         if (has_video_.load() && packet->stream_index == source_.video_stream()->index) {
+            ME_LOG_DEBUG("[demux] push video packet size=", packet->size);
             video_packets_.push(std::move(packet), pgen);
         } else if (has_audio_.load() && packet->stream_index == source_.audio_stream()->index) {
             audio_packets_.push(std::move(packet), pgen);
@@ -365,6 +386,7 @@ void MediaPlayer::video_decode_loop() {
             const PopResult result = video_decoder_->pop(frame.get());
             if (result == PopResult::Ok) {
                 if (video_flush_requested_.load()) break;  // seek 已请求 flush：丢弃本帧
+                ME_LOG_DEBUG("[vdec] frame decoded fmt=", frame->format);
                 if (!video_frames_.push(std::move(frame))) return;  // 队列已 abort
                 hw_active_.store(video_decoder_->is_hardware());  // 首帧后校正硬解标志（可能在首帧才降级）
             } else if (result == PopResult::NeedMoreData) {
@@ -586,6 +608,8 @@ void MediaPlayer::render_loop() {
         // seek 可能发生在 pop 之后：此时拿到的可能是 seek 前的旧帧，直接丢弃
         if (seek_gen_.load() != gen) continue;
         if (!frame) {
+            static int empty_log_count = 0;
+            if (++empty_log_count % 60 == 1) ME_LOG_DEBUG("[render] empty queue");
             // 空队列：保持最后一帧画面（避免 flip-model 呈现未定义内容导致黑屏）
             if (last_frame_ && renderer_) renderer_->draw_frame(last_frame_.get());
             if (present_hook_) present_hook_();

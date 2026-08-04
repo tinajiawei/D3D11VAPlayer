@@ -40,6 +40,7 @@ public:
     void set_sync_engine(std::unique_ptr<ISyncEngine> engine);
 
     Error open(const std::string& path, bool prefer_hw = false);
+    Error open_impl(const std::string& path, bool prefer_hw);  // open 的实际实现（失败时由 open 启动空转渲染）
     void close();
     void pause();
     void play();
