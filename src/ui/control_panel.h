@@ -41,7 +41,7 @@ public:
 private:
     bool prefer_hw_ = true;
     char web_url_buf_[256] = {};
-    bool web_audio_vis_ = false;
+    bool web_audio_vis_ = true;   // 默认开（页面用到才生效）
     bool web_weather_on_ = true;   // 天气默认开启，城市留空=IP 自动定位
     char web_weather_city_[64] = "";
     int web_background_ = 1;

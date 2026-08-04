@@ -58,7 +58,7 @@ std::atomic<int> g_seq_auto_next_change{-1};
 std::atomic<bool> g_seek_requested{false};
 std::atomic<double> g_seek_target{0.0};
 std::atomic<bool> g_web_pick_folder_requested{false};
-std::atomic<int> g_web_audio_vis_state{0};
+std::atomic<int> g_web_audio_vis_state{1};   // 默认开（网页用到音频可视化接口才生效）
 std::atomic<int> g_web_weather_state{1};   // 天气默认开，城市留空=IP 定位
 std::atomic<int> g_web_bg_state{1};
 std::atomic<int> g_web_sakura_state{1};

@@ -529,6 +529,12 @@ void WebViewWallpaper::push_audio_spectrum() {
     if (!webview_) return;
     const std::vector<float> spec = enhance_ ? enhance_->take_spectrum() : std::vector<float>{};
     if (spec.empty()) return;
+    static int push_count = 0;
+    if (++push_count % 60 == 0) {
+        float mx = 0.0f;
+        for (const float v : spec) if (v > mx) mx = v;
+        std::fprintf(stderr, "[enhance] 频谱推送 max=%.2f bins=%zu\\n", mx, spec.size());
+    }
     std::string js = "window.__meAudioPush&&window.__meAudioPush([";
     for (size_t i = 0; i < spec.size(); ++i) {
         char buf[24] = {};

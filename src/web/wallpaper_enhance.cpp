@@ -64,7 +64,7 @@ void compute_spectrum(const std::vector<float>& mono, std::vector<float>& out) {
         // 幅度归一化 + 平方根压缩（人耳近感知），乘增益让常见音量有可见波动
         const double mag = std::abs(f[static_cast<size_t>(k)]) / (kFftSize / 2.0);
         double v = std::sqrt(mag) * 2.6;
-        if (v < 0.02) v = 0.0;
+        if (v < 0.03) v = 0.03;  // 下限：静音时也保留一个基础圆环
         out[static_cast<size_t>(k)] = static_cast<float>(std::min(1.0, v));
     }
 }
@@ -290,12 +290,27 @@ void WallpaperEnhance::audio_loop() {
     const int channels = cap.channels() > 0 ? cap.channels() : 2;
     std::vector<float> accum;
     DWORD last_post = 0;
+    DWORD last_data_tick = GetTickCount();
+    DWORD last_idle_post = 0;
     while (audio_enabled_.load()) {
         std::vector<float> chunk = cap.take_samples();
         if (chunk.empty()) {
+            // 静音/无数据：仍推送一个基础圆环，让用户确认可视化已生效
+            const DWORD now = GetTickCount();
+            if (now - last_data_tick > 500 && now - last_idle_post >= 1000) {
+                last_idle_post = now;
+                std::vector<float> idle(static_cast<size_t>(kBinCount), 0.03f);
+                {
+                    std::lock_guard<std::mutex> lock(spec_mutex_);
+                    spectrum_ = idle;
+                }
+                const DWORD tid = thread_id_.load();
+                if (tid) PostThreadMessageW(tid, WM_APP + 1, kEnhanceMsgSpectrum, 0);
+            }
             Sleep(4);
             continue;
         }
+        last_data_tick = GetTickCount();
         accum.insert(accum.end(), chunk.begin(), chunk.end());
         const size_t need = static_cast<size_t>(kFftSize) * channels;
         while (accum.size() >= need) {
