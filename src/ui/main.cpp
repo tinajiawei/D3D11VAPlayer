@@ -9,6 +9,7 @@
 
 #include <windows.h>
 #include <commdlg.h>
+#include <shlobj.h>
 #include <dbghelp.h>
 #include <psapi.h>
 
@@ -56,6 +57,7 @@ std::atomic<int> g_seq_type_requested{-1};
 std::atomic<int> g_seq_auto_next_change{-1};
 std::atomic<bool> g_seek_requested{false};
 std::atomic<double> g_seek_target{0.0};
+std::atomic<bool> g_web_pick_folder_requested{false};
 bool g_headless_cli = false;
 bool g_wallpaper_keep = false;   // --headless 无头模式（HeadlessRenderer + NullAudioSink）
 double g_run_seconds = 8.0;    // --run-seconds 无头运行结束时间
@@ -174,6 +176,7 @@ void present_callback(void*) {
         g_seek_requested.store(true);
         g_seek_target.store(requests.seek_target);
     }
+    if (requests.web_pick_folder) g_web_pick_folder_requested.store(true);
     // 播完自动下一个（壁纸模式同样生效：图片/视频轮播）
     if (g_sequence_auto_next.load() && g_controller.ended() && !g_controller.paused()) {
         g_seq_auto_requested.store(true);
@@ -635,6 +638,26 @@ int wmain(int argc, wchar_t** argv) {
         if (g_seq_auto_requested.exchange(false)) {
             std::wstring p;
             if (g_sequence.next(p)) open_media(p, g_open_prefer_hw.load());
+        }
+        if (g_web_pick_folder_requested.exchange(false)) {
+            BROWSEINFOW bi = {};
+            bi.hwndOwner = g_window.wallpaper_mode() ? g_floating_panel.handle() : g_window.handle();
+            bi.lpszTitle = L"选择网页壁纸文件夹（含 index.html）";
+            bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+            LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
+            if (pidl) {
+                wchar_t folder[MAX_PATH] = {};
+                if (SHGetPathFromIDListW(pidl, folder)) {
+                    const std::string path = utf8_from_wide(folder);
+                    g_panel.set_web_url(path);
+                    if (g_web_wallpaper.active()) {
+                        g_web_wallpaper.navigate(path);
+                    } else {
+                        toggle_web_wallpaper(path);
+                    }
+                }
+                CoTaskMemFree(pidl);
+            }
         }
         if (g_wallpaper_requested.exchange(false)) toggle_wallpaper();
         {

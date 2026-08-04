@@ -61,6 +61,10 @@ void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, 
         requests.web_wallpaper_toggle = true;
         requests.web_url = web_url_buf_;
     }
+    if (ImGui::Button("本地网页...")) {
+        requests.web_pick_folder = true;
+    }
+    ImGui::TextDisabled("本地网页：填文件夹路径或 index.html 路径，也可点按钮选择");
 
     ImGui::Separator();
     ImGui::Text("序列播放（文件夹+子文件夹）");
@@ -169,6 +173,10 @@ void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, 
     ImGui::Separator();
     ImGui::TextDisabled("快捷键: 空格暂停 | ←→ 10 秒 | [ ] 变速 | M 静音 | H 隐藏面板");
     ImGui::End();
+}
+
+void ControlPanel::set_web_url(const std::string& url) {
+    std::snprintf(web_url_buf_, sizeof(web_url_buf_), "%s", url.c_str());
 }
 
 }  // namespace me

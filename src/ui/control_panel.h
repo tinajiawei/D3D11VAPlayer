@@ -11,6 +11,7 @@ struct PanelRequest {
     bool prefer_hw = false;
     bool wallpaper_toggle = false;
     bool web_wallpaper_toggle = false;
+    bool web_pick_folder = false;  // 选择本地网页壁纸文件夹
     std::string web_url;  // 请求切换壁纸模式
     int sequence_type = -1;      // >=0：用户切换了扫描类型（SequenceType）
     bool sequence_prev = false;
@@ -27,6 +28,7 @@ public:
     void draw(PlaybackController& controller, PanelRequest& requests, bool* show_panel,
              bool wallpaper_mode, const SequenceInfo& seq);
     void set_open_error(const std::string& message) { open_error_ = message; }
+    void set_web_url(const std::string& url);  // 外部（文件夹选择器）填入 URL 输入框
     std::string web_url() const { return web_url_buf_; }
 
 private:

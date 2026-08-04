@@ -42,8 +42,47 @@ tick();setInterval(tick,1000);
 </script></body></html>
 )html";
 
-}  // namespace
+bool looks_like_local_path(const std::string& s) {
+    if (s.rfind("file://", 0) == 0) return true;
+    if (s.size() >= 3 && s[1] == L':') return true;                  // X:\... 或 X:/...
+    if (s.size() >= 2 && s[0] == L'\\' && s[1] == L'\\') return true;  // UNC
+    if (s.find('\\') != std::string::npos) return true;              // 含反斜杠的本地路径
+    return false;
+}
 
+std::wstring wide_from_utf8(const std::string& s) {
+    const int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    if (len <= 1) return {};
+    std::wstring out(static_cast<size_t>(len - 1), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, out.data(), len);
+    return out;
+}
+
+// 本地路径 → file:/// URL：UTF-8 百分号编码非 ASCII 字符（UrlCreateFromPathW 对中文路径不可靠）
+std::wstring make_file_url(const std::wstring& path) {
+    const int len = WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string utf8;
+    if (len > 1) {
+        utf8.resize(static_cast<size_t>(len - 1));
+        WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, utf8.data(), len, nullptr, nullptr);
+    }
+    const wchar_t hex[] = L"0123456789ABCDEF";
+    std::wstring url = L"file:///";
+    for (const char ch : utf8) {
+        if (ch == '\\') { url += L'/'; continue; }
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if (c > 0x7F || ch == '%' || ch == '#' || ch == '?' || ch == ' ') {
+            url += L'%';
+            url += hex[c >> 4];
+            url += hex[c & 0xF];
+        } else {
+            url += static_cast<wchar_t>(ch);
+        }
+    }
+    return url;
+}
+
+}  // namespace
 std::wstring WebViewWallpaper::user_data_folder() const {
     // 用户数据目录必须用纯 ASCII 路径：WebView2 浏览器进程在非 ASCII 路径下可能启动失败（E_ABORT）
     wchar_t buf[MAX_PATH] = {};
@@ -165,8 +204,19 @@ void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url
 
     const std::wstring folder = user_data_folder();
     HANDLE done = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions> env_options;
+    // 该 SDK 头文件未导出 CreateCoreWebView2EnvironmentOptions 辅助函数，用文档公开的 CLSID 创建
+    // {2FDE08A8-8881-4BB5-A72B-8C90DC2D9D35}
+    static const CLSID kClsidWebView2EnvOptions = {0x2fde08a8, 0x8881, 0x4bb5,
+                                                      {0xa7, 0x2b, 0x8c, 0x90, 0xdc, 0x2d, 0x9d, 0x35}};
+    CoCreateInstance(kClsidWebView2EnvOptions, nullptr, CLSCTX_INPROC_SERVER,
+                     IID_PPV_ARGS(&env_options));
+    if (env_options) {
+        // 壁纸页需要无手势自动播放音频；本地页可能需要 file->file 访问
+        env_options->put_AdditionalBrowserArguments(L"--autoplay-policy=no-user-gesture-required --allow-file-access-from-files");
+    }
     HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
-        nullptr, folder.c_str(), nullptr,
+        nullptr, folder.c_str(), env_options.Get(),
         Microsoft::WRL::Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [this, done, hwnd, url](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
                 if (FAILED(result)) {
@@ -295,6 +345,58 @@ void WebViewWallpaper::navigate_thread(const std::string& url) {
         webview_->NavigateToString(kDemoHtml);
         return;
     }
+
+    // 本地网页壁纸：文件夹 / index.html 路径 / file:// URL
+    if (looks_like_local_path(url)) {
+        const std::wstring wpath = wide_from_utf8(url);
+        if (url.rfind("file://", 0) != 0) {
+            // 用虚拟主机映射加载本地文件夹（官方推荐，绕开 file:// 限制，中文路径也可靠）：
+            // 目录 → 映射整个目录；文件 → 映射其父目录，再导航到文件名
+            std::wstring folder = wpath;
+            std::wstring entry = L"index.html";
+            const DWORD attr = GetFileAttributesW(wpath.c_str());
+            if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
+                if (GetFileAttributesW((wpath + L"\\index.html").c_str()) == INVALID_FILE_ATTRIBUTES &&
+                    GetFileAttributesW((wpath + L"\\index.htm").c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    entry = L"index.htm";
+                }
+            } else {
+                const size_t slash = wpath.find_last_of(L"\\/");
+                if (slash != std::wstring::npos) {
+                    entry = wpath.substr(slash + 1);
+                    folder = wpath.substr(0, slash);
+                } else {
+                    folder = L".";
+                }
+            }
+            Microsoft::WRL::ComPtr<ICoreWebView2_3> wv3;
+            if (SUCCEEDED(webview_->QueryInterface(IID_PPV_ARGS(&wv3)))) {
+                const HRESULT hr = wv3->SetVirtualHostNameToFolderMapping(
+                    L"me-local-wallpaper", folder.c_str(),
+                    COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+                if (SUCCEEDED(hr)) {
+                    const std::wstring nav = L"https://me-local-wallpaper/" + entry;
+                    std::fprintf(stderr, "[webview] 本地网页壁纸: %ls -> %ls\n",
+                                 folder.c_str(), nav.c_str());
+                    webview_->Navigate(nav.c_str());
+                    return;
+                }
+            }
+            // 映射失败回退 file://（中文路径可能不可靠，但保底可用）
+            std::wstring full = wpath;
+            if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
+                full += L"\\" + entry;
+            }
+            const std::wstring file_url = make_file_url(full);
+            std::fprintf(stderr, "[webview] 本地网页壁纸(回退file): %ls\n", file_url.c_str());
+            webview_->Navigate(file_url.c_str());
+            return;
+        }
+        std::fprintf(stderr, "[webview] 本地网页壁纸: %ls\n", wpath.c_str());
+        webview_->Navigate(wpath.c_str());
+        return;
+    }
+
     // 无协议前缀时自动补全 https://（用户常输入 www.baidu.com）
     std::string fixed = url;
     if (fixed.find("://") == std::string::npos &&
@@ -303,9 +405,7 @@ void WebViewWallpaper::navigate_thread(const std::string& url) {
         fixed.compare(0, 7, "file://") != 0) {
         fixed = "https://" + fixed;
     }
-    const int len = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, nullptr, 0);
-    std::wstring wurl(static_cast<size_t>(len > 0 ? len - 1 : 0), L'\0');
-    if (len > 0) MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, wurl.data(), len);
+    std::wstring wurl = wide_from_utf8(fixed);
     webview_->Navigate(wurl.c_str());
 }
 
