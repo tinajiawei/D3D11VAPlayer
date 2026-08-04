@@ -38,6 +38,8 @@ public:
     void set_audio_sink(std::unique_ptr<IAudioSink> sink);
     // 同步引擎由 C API 注入（plugin\2\sync.dll）；未注入时 open 失败
     void set_sync_engine(std::unique_ptr<ISyncEngine> engine);
+    // 无媒体时也启动空转渲染线程，让控制面板始终可见可输入
+    void start_idle_render();
 
     Error open(const std::string& path, bool prefer_hw = false);
     Error open_impl(const std::string& path, bool prefer_hw);  // open 的实际实现（失败时由 open 启动空转渲染）

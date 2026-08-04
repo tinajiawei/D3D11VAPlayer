@@ -44,6 +44,15 @@ Error MediaPlayer::open(const std::string& path, bool prefer_hw) {
     return err;
 }
 
+void MediaPlayer::start_idle_render() {
+    // 无媒体时也让渲染线程空转：控制面板（含网页壁纸 URL 输入）始终可见
+    if (renderer_ && !running_.load()) {
+        running_.store(true);
+        render_thread_ = std::thread(&MediaPlayer::render_loop, this);
+        ME_LOG_INFO("空转渲染线程启动（无媒体，控制面板可用）");
+    }
+}
+
 Error MediaPlayer::open_impl(const std::string& path, bool prefer_hw) {
     prefer_hw_ = prefer_hw;
     if (!sync_) return Error::make(Err::MediaOpenFailed, "同步引擎不可用（sync 插件未注入）");

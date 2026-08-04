@@ -76,6 +76,13 @@ build\src\media_player_app.exe samples\test_hevc.mp4 --hw   # 优先硬解
 | M | 静音/恢复 |
 | H | 显示/隐藏控制面板 |
 
+### 网页壁纸（WebView2）怎么用
+
+1. 启动 `media_player_app.exe`（无需先打开媒体，控制面板始终可见）
+2. 在控制面板"网页壁纸 (WebView2)"区域的输入框输入网址（留空 = 内置动画演示页）
+3. 点击"网页壁纸"按钮进入桌面壁纸，再次点击退出
+4. 命令行直达：`media_player_app.exe --web-wallpaper https://example.com`
+
 ### 回归/验收参数（详见 docs/08）
 10. [docs/11-二期规划.md](docs/11-二期规划.md) — 二期路线与模块化契约
 

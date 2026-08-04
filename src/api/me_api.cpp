@@ -221,6 +221,7 @@ ME_API ME_Player* me_create_player_ex(void* hwnd, int width, int height, int fla
         if (p->present_cb) p->present_cb(p->present_user);
         p->renderer->present_swapchain();
     });
+    p->player.start_idle_render();  // 无媒体也渲染面板
     return p;
 }
 
