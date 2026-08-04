@@ -4,6 +4,7 @@
 #include <string>
 
 #include <objbase.h>
+#include <ole2.h>
 #include <wrl/client.h>
 #include <wrl/event.h>
 
@@ -66,13 +67,78 @@ std::wstring WebViewWallpaper::user_data_folder() const {
     return L"C:\\MediaEngineWebView2";
 }
 
+std::string WebViewWallpaper::url() const {
+    std::lock_guard<std::mutex> lock(url_mutex_);
+    return url_;
+}
+
 bool WebViewWallpaper::create(HWND workerw, const RECT& rc, const std::string& url) {
-    if (hwnd_) return true;
+    if (active()) return true;
     if (!workerw) workerw = find_worker_w();
     if (!workerw) return false;
 
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);  // 已初始化则忽略（MTA 也可用）
+    {
+        std::lock_guard<std::mutex> lock(url_mutex_);
+        url_ = url;
+    }
+    thread_ = std::thread(&WebViewWallpaper::thread_main, this, workerw, rc, url);
 
+    // 等待 STA 线程完成窗口/环境/控制器创建（最多 8 秒）
+    for (int i = 0; i < 160 && !thread_ready_.load() && !thread_failed_.load(); ++i) {
+        Sleep(50);
+    }
+    if (!thread_ready_.load()) {
+        thread_failed_.store(true);
+        if (thread_id_) PostThreadMessageW(thread_id_, WM_APP + 1, kOpClose, 0);
+        if (thread_.joinable()) thread_.join();
+        return false;
+    }
+    return true;
+}
+
+void WebViewWallpaper::destroy() {
+    if (thread_id_ && thread_.joinable()) {
+        PostThreadMessageW(thread_id_, WM_APP + 1, kOpClose, 0);
+        thread_.join();
+    }
+    webview_ = nullptr;
+    env_ = nullptr;
+    controller_ = nullptr;
+    thread_ready_.store(false);
+    thread_failed_.store(false);
+    thread_id_ = 0;
+    hwnd_.store(nullptr);
+}
+
+void WebViewWallpaper::navigate(const std::string& url) {
+    {
+        std::lock_guard<std::mutex> lock(url_mutex_);
+        url_ = url;
+    }
+    if (thread_id_) PostThreadMessageW(thread_id_, WM_APP + 1, kOpNavigate, 0);
+}
+
+void WebViewWallpaper::go_back() {
+    if (thread_id_) PostThreadMessageW(thread_id_, WM_APP + 1, kOpBack, 0);
+}
+
+void WebViewWallpaper::go_forward() {
+    if (thread_id_) PostThreadMessageW(thread_id_, WM_APP + 1, kOpForward, 0);
+}
+
+void WebViewWallpaper::reload() {
+    if (thread_id_) PostThreadMessageW(thread_id_, WM_APP + 1, kOpReload, 0);
+}
+
+void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url) {
+    // STA：WebView2 要求；主线程可能已被音频输出初始化为 MTA，不能共用
+    const HRESULT ole_hr = OleInitialize(nullptr);
+    if (FAILED(ole_hr) && ole_hr != RPC_E_CHANGED_MODE && ole_hr != S_FALSE) {
+        std::fprintf(stderr, "[webview] OleInitialize 失败: 0x%08X\n", static_cast<unsigned>(ole_hr));
+    }
+    thread_id_ = GetCurrentThreadId();
+
+    // 窗口与 WebView2 控制器必须在同一线程：窗口也在此创建
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = &WebViewWallpaper::wnd_proc;
@@ -81,93 +147,134 @@ bool WebViewWallpaper::create(HWND workerw, const RECT& rc, const std::string& u
     wc.lpszClassName = kClassName;
     RegisterClassExW(&wc);
 
-    parent_ = workerw;
-    // 先以顶层窗口创建控制器（跨进程父链会让 WebView2 返回 E_ABORT），就绪后再挂到 WorkerW
-    hwnd_ = CreateWindowExW(0, kClassName, L"MediaEngine WebView",
-                            WS_POPUP | WS_VISIBLE,
-                            rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
-                            nullptr, nullptr, GetModuleHandleW(nullptr), this);
-    if (!hwnd_) return false;
+    const HWND hwnd = CreateWindowExW(0, kClassName, L"MediaEngine WebView",
+                                      WS_POPUP | WS_VISIBLE,
+                                      rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
+                                      nullptr, nullptr, GetModuleHandleW(nullptr), this);
+    hwnd_.store(hwnd);
+    if (!hwnd) {
+        thread_failed_.store(true);
+        OleUninitialize();
+        return;
+    }
 
-    url_ = url;
     const std::wstring folder = user_data_folder();
-    const HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
+    HANDLE done = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
         nullptr, folder.c_str(), nullptr,
         Microsoft::WRL::Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-            [this](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
+            [this, done, hwnd, url](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
                 if (FAILED(result)) {
                     std::fprintf(stderr, "[webview] 环境创建失败: 0x%08X\n", static_cast<unsigned>(result));
+                    thread_failed_.store(true);
+                    SetEvent(done);
                     return result;
                 }
                 env_ = env;
-                return env->CreateCoreWebView2Controller(
-                    hwnd_,
+                const HRESULT cr = env->CreateCoreWebView2Controller(
+                    hwnd,
                     Microsoft::WRL::Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                        [this](HRESULT r2, ICoreWebView2Controller* controller) -> HRESULT {
+                        [this, done, url](HRESULT r2, ICoreWebView2Controller* controller) -> HRESULT {
                             if (FAILED(r2)) {
-                                std::fprintf(stderr, "[webview] 控制器创建失败: 0x%08X\n", static_cast<unsigned>(r2));
+                                std::fprintf(stderr, "[webview] 控制器创建失败: 0x%08X\n",
+                                             static_cast<unsigned>(r2));
+                                thread_failed_.store(true);
+                                SetEvent(done);
                                 return r2;
                             }
                             controller_ = controller;
                             if (SUCCEEDED(controller_->get_CoreWebView2(&webview_))) {
-                                // 就绪后挂入 WorkerW 并铺满
-                                if (parent_) {
-                                    SetParent(hwnd_, parent_);
-                                    SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
-                                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-                                }
-                                ready_.store(true);
-                                resize_to_parent();
-                                navigate(url_);
-                                std::fprintf(stderr, "[webview] 网页壁纸已就绪: %s\n", url_.c_str());
+                                thread_ready_.store(true);
+                                navigate_thread(url);
+                                std::fprintf(stderr, "[webview] 网页壁纸已就绪\n");
                             }
+                            SetEvent(done);
                             return S_OK;
                         }).Get());
+                if (FAILED(cr)) {
+                    thread_failed_.store(true);
+                    SetEvent(done);
+                    return cr;
+                }
+                return cr;
             }).Get());
     if (FAILED(hr)) {
-        std::fprintf(stderr, "[webview] 初始化调用失败: 0x%08X\n", static_cast<unsigned>(hr));
-        DestroyWindow(hwnd_);
-        hwnd_ = nullptr;
-        return false;
+        std::fprintf(stderr, "[webview] 环境创建调用失败: 0x%08X\n", static_cast<unsigned>(hr));
+        thread_failed_.store(true);
+        SetEvent(done);
     }
-    return true;
+
+    // 边等待回调边泵消息：WebView2 回调需要消息泵派发，否则互相等死
+    const DWORD deadline = GetTickCount() + 10000;
+    bool created = false;
+    while (!created && GetTickCount() < deadline) {
+        const DWORD wr = MsgWaitForMultipleObjects(1, &done, FALSE, 200, QS_ALLINPUT);
+        if (wr == WAIT_OBJECT_0) { created = true; break; }
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    if (!created) {
+        std::fprintf(stderr, "[webview] 环境/控制器创建超时\n");
+        thread_failed_.store(true);
+    }
+    CloseHandle(done);
+
+    // 就绪后挂到 WorkerW 并铺满（窗口在本线程，SetParent 安全）
+    if (thread_ready_.load() && workerw) {
+        SetParent(hwnd, workerw);
+        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        resize_thread();
+    }
+
+    // 消息泵：处理导航/操作请求与 WebView2 内部消息
+    MSG msg;
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (msg.message == WM_APP + 1) {
+            switch (msg.wParam) {
+                case kOpNavigate: {
+                    std::lock_guard<std::mutex> lock(url_mutex_);
+                    navigate_thread(url_);
+                    break;
+                }
+                case kOpResize: resize_thread(); break;
+                case kOpBack: if (webview_) webview_->GoBack(); break;
+                case kOpForward: if (webview_) webview_->GoForward(); break;
+                case kOpReload: if (webview_) webview_->Reload(); break;
+                case kOpClose:
+                    if (controller_) controller_->Close();
+                    if (hwnd) DestroyWindow(hwnd);
+                    hwnd_.store(nullptr);
+                    PostQuitMessage(0);
+                    break;
+                default: break;
+            }
+        } else {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    OleUninitialize();
 }
 
-void WebViewWallpaper::destroy() {
-    if (controller_) {
-        controller_->Close();
-        controller_ = nullptr;
-    }
-    webview_ = nullptr;
-    env_ = nullptr;
-    ready_.store(false);
-    if (hwnd_) {
-        DestroyWindow(hwnd_);
-        hwnd_ = nullptr;
-    }
-}
-
-void WebViewWallpaper::navigate(const std::string& url) {
-    url_ = url;
-    if (!ready_ || !webview_) return;
-    if (url_.empty()) {
+void WebViewWallpaper::navigate_thread(const std::string& url) {
+    if (!webview_) return;
+    if (url.empty()) {
         webview_->NavigateToString(kDemoHtml);
-    } else {
-        const int len = MultiByteToWideChar(CP_UTF8, 0, url_.c_str(), -1, nullptr, 0);
-        std::wstring wurl(static_cast<size_t>(len > 0 ? len - 1 : 0), L'\0');
-        if (len > 0) MultiByteToWideChar(CP_UTF8, 0, url_.c_str(), -1, wurl.data(), len);
-        webview_->Navigate(wurl.c_str());
+        return;
     }
+    const int len = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, nullptr, 0);
+    std::wstring wurl(static_cast<size_t>(len > 0 ? len - 1 : 0), L'\0');
+    if (len > 0) MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, wurl.data(), len);
+    webview_->Navigate(wurl.c_str());
 }
 
-void WebViewWallpaper::go_back() { if (ready_ && webview_) webview_->GoBack(); }
-void WebViewWallpaper::go_forward() { if (ready_ && webview_) webview_->GoForward(); }
-void WebViewWallpaper::reload() { if (ready_ && webview_) webview_->Reload(); }
-
-void WebViewWallpaper::resize_to_parent() {
-    if (!controller_ || !hwnd_) return;
+void WebViewWallpaper::resize_thread() {
+    if (!controller_ || !hwnd_.load()) return;
     RECT rc = {};
-    GetClientRect(GetParent(hwnd_), &rc);
+    GetClientRect(GetParent(hwnd_.load()), &rc);
     controller_->put_Bounds(RECT{0, 0, rc.right - rc.left, rc.bottom - rc.top});
 }
 
@@ -177,11 +284,13 @@ LRESULT CALLBACK WebViewWallpaper::wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPAR
         const auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
         self = static_cast<WebViewWallpaper*>(cs->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-        self->hwnd_ = hwnd;
+        self->hwnd_.store(hwnd);
     }
     if (self) {
-        if (msg == WM_SIZE && self->controller_) self->resize_to_parent();
-        if (msg == WM_DESTROY) self->hwnd_ = nullptr;
+        if (msg == WM_SIZE && self->thread_id_) {
+            PostThreadMessageW(self->thread_id_, WM_APP + 1, kOpResize, 0);
+        }
+        if (msg == WM_DESTROY) self->hwnd_.store(nullptr);
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
