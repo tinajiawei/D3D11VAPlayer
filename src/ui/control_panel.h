@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "ui/playback_controller.h"
 
@@ -17,7 +17,8 @@ struct PanelRequest {
 class ControlPanel {
 public:
     // 在渲染线程每帧调用
-    void draw(PlaybackController& controller, PanelRequest& requests, bool* show_panel);
+    void draw(PlaybackController& controller, PanelRequest& requests, bool* show_panel,
+             bool wallpaper_mode);
     void set_open_error(const std::string& message) { open_error_ = message; }
     std::string web_url() const { return web_url_buf_; }
 

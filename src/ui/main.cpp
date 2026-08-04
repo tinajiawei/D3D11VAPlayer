@@ -135,10 +135,11 @@ void present_callback(void*) {
     ImGui::NewFrame();
 
     me::PanelRequest requests;
+    const bool wallpaper_mode = g_window.wallpaper_mode();
     if (g_floating_panel.active() || g_floating_panel.pending()) {
-        g_floating_panel.render(g_panel, g_controller, requests, &g_show_panel);
+        g_floating_panel.render(g_panel, g_controller, requests, &g_show_panel, wallpaper_mode);
     } else {
-        g_panel.draw(g_controller, requests, &g_show_panel);
+        g_panel.draw(g_controller, requests, &g_show_panel, wallpaper_mode);
     }
     g_open_prefer_hw.store(requests.prefer_hw);  // 勾选/取消后立即生效：拖入新文件也用这个值
     if (requests.wallpaper_toggle) g_wallpaper_requested.store(true);
@@ -301,6 +302,9 @@ int wmain(int argc, wchar_t** argv) {
     std::printf("MediaEngine v0.1\n");
 
     g_window.set_file_drop_callback([](const std::wstring& path) {
+        open_media(path, g_open_prefer_hw.load());
+    });
+    g_floating_panel.set_file_drop_callback([](const std::wstring& path) {
         open_media(path, g_open_prefer_hw.load());
     });
     g_window.set_key_callback([](unsigned vk) {
@@ -579,7 +583,8 @@ int wmain(int argc, wchar_t** argv) {
             wchar_t file[MAX_PATH] = {};
             OPENFILENAMEW ofn = {};
             ofn.lStructSize = sizeof(ofn);
-            ofn.hwndOwner = g_window.handle();
+            // 壁纸模式下主窗口是点击穿透的桌面层，文件对话框不能挂在它下面（会跑到图标后面）
+            ofn.hwndOwner = g_window.wallpaper_mode() ? g_floating_panel.handle() : g_window.handle();
             ofn.lpstrFile = file;
             ofn.nMaxFile = MAX_PATH;
             ofn.lpstrFilter = L"媒体文件\0*.mp4;*.mkv;*.mov;*.ts;*.flv;*.webm;*.avi;*.wav;*.mp3;*.flac;*.opus;*.m4a;*.aac;*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp\0所有文件\0*.*\0";

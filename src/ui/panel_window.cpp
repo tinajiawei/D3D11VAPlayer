@@ -1,4 +1,4 @@
-#include "ui/panel_window.h"
+﻿#include "ui/panel_window.h"
 
 #include <string>
 
@@ -41,6 +41,7 @@ bool PanelWindow::create(HINSTANCE instance, int width, int height) {
                             CW_USEDEFAULT, CW_USEDEFAULT, width_, height_,
                             nullptr, nullptr, instance_, this);
     if (!hwnd_) return false;
+    DragAcceptFiles(hwnd_, TRUE);
 
     // 位置记忆：优先恢复上次保存的坐标；不在任何工作区内则回退右上角
     RECT wa = {};
@@ -117,9 +118,24 @@ LRESULT PanelWindow::handle_message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_LBUTTONUP:
             left_down_.store(false);
             return 0;
+        case WM_DROPFILES:
+            handle_drop(wp);
+            return 0;
         default:
             return DefWindowProcW(hwnd, msg, wp, lp);
     }
+}
+
+void PanelWindow::handle_drop(WPARAM wp) {
+    const HDROP drop = reinterpret_cast<HDROP>(wp);
+    const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+    if (count > 0) {
+        const UINT len = DragQueryFileW(drop, 0, nullptr, 0);
+        std::wstring path(len, L'\0');
+        DragQueryFileW(drop, 0, path.data(), len + 1);
+        if (on_file_drop_) on_file_drop_(path);
+    }
+    DragFinish(drop);
 }
 
 }  // namespace me

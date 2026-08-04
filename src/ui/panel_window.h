@@ -1,6 +1,8 @@
-#pragma once
+﻿#pragma once
 
 #include <atomic>
+#include <functional>
+#include <string>
 
 #include <windows.h>
 
@@ -15,6 +17,8 @@ public:
     void destroy();
     // 绑定面板 ImGui context（键盘消息经 WndProcHandler 写入该 context 的 io）
     void set_imgui_context(void* imgui_ctx) { imgui_ctx_ = imgui_ctx; }
+    using FileDropCallback = std::function<void(const std::wstring& path)>;
+    void set_file_drop_callback(FileDropCallback cb) { on_file_drop_ = std::move(cb); }
     bool valid() const { return hwnd_ != nullptr; }
     HWND handle() const { return hwnd_; }
     int width() const { return width_; }
@@ -31,6 +35,7 @@ private:
 
     static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT handle_message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    void handle_drop(WPARAM wp);
 
     HWND hwnd_ = nullptr;
     HINSTANCE instance_ = nullptr;
@@ -41,6 +46,7 @@ private:
     std::atomic<bool> left_down_{false};
     std::atomic<int> mouse_x_{0};
     std::atomic<int> mouse_y_{0};
+    FileDropCallback on_file_drop_;
 };
 
 }  // namespace me

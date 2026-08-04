@@ -33,6 +33,7 @@ bool FloatingPanel::create_impl(HINSTANCE instance, ID3D11Device* device,
     if (window_.valid()) return true;
 
     if (!window_.create(instance, width_, height_)) return false;
+    if (file_drop_cb_) window_.set_file_drop_callback(file_drop_cb_);
 
     // DXGI flip-model 交换链（与主设备同一 adapter）
     Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
@@ -103,7 +104,8 @@ void FloatingPanel::destroy_impl() {
 }
 
 void FloatingPanel::render(ControlPanel& panel, PlaybackController& controller,
-                           PanelRequest& requests, bool* show_panel) {
+                           PanelRequest& requests, bool* show_panel,
+                           bool wallpaper_mode) {
     // 先执行挂起的创建/销毁（渲染线程独占 DXGI/ImGui 资源）
     if (create_pending_.exchange(false)) {
         if (!create_impl(pending_instance_, pending_device_, pending_context_)) {
@@ -140,7 +142,7 @@ void FloatingPanel::render(ControlPanel& panel, PlaybackController& controller,
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
-    panel.draw(controller, requests, show_panel);
+    panel.draw(controller, requests, show_panel, wallpaper_mode);
     ImGui::Render();
 
     device_ctx_->OMSetRenderTargets(1, rtv_.GetAddressOf(), nullptr);

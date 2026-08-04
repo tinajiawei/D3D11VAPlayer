@@ -1,4 +1,4 @@
-#include "ui/control_panel.h"
+﻿#include "ui/control_panel.h"
 
 #include <string>
 #include <cstdio>
@@ -8,7 +8,8 @@
 namespace me {
 
     static std::string g_audio_error;  // 音频设备切换失败提示
-void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, bool* show_panel) {
+void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, bool* show_panel,
+                          bool wallpaper_mode) {
     // 音频设备列表缓存（2 秒刷新一次，避免每帧枚举 COM 设备）
     static std::vector<std::string> g_devices;
     static double g_dev_refresh = 0.0;
@@ -44,7 +45,10 @@ void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, 
     ImGui::SameLine();
     if (ImGui::Button("关闭文件")) controller.close();
     ImGui::SameLine();
-    if (ImGui::Button("壁纸模式")) requests.wallpaper_toggle = true;
+    if (ImGui::Button(wallpaper_mode ? "退出壁纸模式" : "壁纸模式")) requests.wallpaper_toggle = true;
+    if (wallpaper_mode) {
+        ImGui::TextDisabled("壁纸模式：可直接拖图片/视频到本面板更换");
+    }
     ImGui::Separator();
     ImGui::Text("网页壁纸 (WebView2)");
     ImGui::SetNextItemWidth(240.0f);

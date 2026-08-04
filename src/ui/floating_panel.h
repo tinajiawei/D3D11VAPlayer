@@ -1,6 +1,8 @@
-#pragma once
+﻿#pragma once
 
 #include <atomic>
+#include <functional>
+#include <string>
 
 #include <windows.h>
 #include <d3d11.h>
@@ -27,7 +29,13 @@ public:
 
     // 渲染线程每帧调用：先执行挂起的创建/销毁，再绘制面板并 Present
     void render(ControlPanel& panel, PlaybackController& controller, PanelRequest& requests,
-                bool* show_panel);
+                bool* show_panel, bool wallpaper_mode);
+
+    // 浮层面板接收拖入的文件（壁纸模式下主窗口点击穿透，拖放只能落到面板）
+    void set_file_drop_callback(std::function<void(const std::wstring&)> cb) {
+        file_drop_cb_ = std::move(cb);
+    }
+    HWND handle() const { return window_.handle(); }
 
     // 兜底销毁：调用方必须保证渲染线程已停止（进程退出时）
     void destroy_now();
@@ -46,6 +54,7 @@ private:
     ImGuiContext* panel_ctx_ = nullptr;
     ImGuiContext* main_ctx_ = nullptr;
     ID3D11DeviceContext* device_ctx_ = nullptr;
+    std::function<void(const std::wstring&)> file_drop_cb_;
     int width_ = 380;
     int height_ = 540;
 
