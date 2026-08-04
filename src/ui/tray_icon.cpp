@@ -56,6 +56,7 @@ void TrayIcon::show_menu() {
     AppendMenuW(menu, MF_STRING, kTrayShowPanel, L"显示控制面板");
     AppendMenuW(menu, MF_STRING, kTrayHidePanel, L"隐藏控制面板");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kTrayToggleWebWallpaper, L"网页壁纸");
     AppendMenuW(menu, MF_STRING | (wallpaper_mode_ ? MF_CHECKED : 0), kTrayToggleWallpaper,
                 L"壁纸模式");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);

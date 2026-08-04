@@ -97,7 +97,7 @@ void toggle_wallpaper() {
 void toggle_web_wallpaper(const std::string& url) {
     if (g_web_wallpaper.active()) {
         g_web_wallpaper.destroy();
-                g_capture_preview.stop();
+        ShowWindow(g_window.handle(), SW_SHOW);  // 恢复主窗口
         std::fprintf(stderr, "[webwallpaper] 退出网页壁纸\n");
         return;
     }
@@ -110,6 +110,7 @@ void toggle_web_wallpaper(const std::string& url) {
     RECT rc = {};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &rc, 0);
     if (g_web_wallpaper.create(nullptr, rc, url)) {
+        ShowWindow(g_window.handle(), SW_HIDE);  // 隐藏主窗口，网页壁纸铺满可见
         std::fprintf(stderr, "[webwallpaper] 进入网页壁纸\n");
     } else {
         std::fprintf(stderr, "[webwallpaper] 创建失败（找不到 WorkerW）\n");
@@ -284,6 +285,12 @@ int wmain(int argc, wchar_t** argv) {
                 case me::kTrayHidePanel: g_show_panel = false; break;
                 case me::kTrayToggleWallpaper: g_wallpaper_requested.store(true); break;
                 case me::kTrayExit: PostMessageW(g_window.handle(), WM_CLOSE, 0, 0); break;
+                case me::kTrayToggleWebWallpaper: {
+                    std::lock_guard<std::mutex> lock(g_request_mutex);
+                    g_web_wallpaper_toggle_request = true;
+                    g_web_wallpaper_url = g_web_wallpaper.active() ? g_web_wallpaper.url() : g_panel.web_url();
+                    break;
+                }
                 default: break;
             }
         });

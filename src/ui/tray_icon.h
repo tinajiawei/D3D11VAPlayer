@@ -11,6 +11,7 @@ enum TrayCommand {
     kTrayShowPanel = 1,
     kTrayHidePanel,
     kTrayToggleWallpaper,
+    kTrayToggleWebWallpaper,  // 切换网页壁纸（隐藏主窗口时也能控制）
     kTrayExit,
 };
 
