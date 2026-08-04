@@ -350,6 +350,14 @@ void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url
                                                             return S_OK;
                                                         }).Get());
                                                 push_wallpaper_props();
+                                                // 音频可视化诊断：回读监听器注册状态与页面开关
+                                                webview_->ExecuteScript(
+                                                    L"JSON.stringify({cbs:window.__meAudioCallbacks?window.__meAudioCallbacks.length:0,reg:typeof window.wallpaperRegisterAudioListener,listener:typeof window.wallpaperAudioListener,vis:(typeof visual_audio_model!=='undefined'?visual_audio_model:'?'),showCircle:(typeof param!=='undefined'?param.showCircle:'?'),range:(typeof param!=='undefined'?param.range:'?'),canvas:!!document.getElementById('can')})",
+                                                    Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+                                                        [](HRESULT, LPCWSTR result) -> HRESULT {
+                                                            if (result && *result) std::fprintf(stderr, "[webview] 音频诊断: %ls\n", result);
+                                                            return S_OK;
+                                                        }).Get());
                                             }
                                             return S_OK;
                                         }).Get(), &nav_token);
