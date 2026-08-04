@@ -184,6 +184,17 @@ void WebViewWallpaper::thread_main(HWND workerw, RECT rc, const std::string& url
                             }
                             controller_ = controller;
                             if (SUCCEEDED(controller_->get_CoreWebView2(&webview_))) {
+                                EventRegistrationToken nav_token = {};
+                                webview_->add_NavigationCompleted(
+                                    Microsoft::WRL::Callback<ICoreWebView2NavigationCompletedEventHandler>(
+                                        [](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+                                            BOOL ok = FALSE;
+                                            COREWEBVIEW2_WEB_ERROR_STATUS status = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
+                                            args->get_IsSuccess(&ok);
+                                            args->get_WebErrorStatus(&status);
+                                            std::fprintf(stderr, "[webview] 导航完成 success=%d err=%d\\n", ok ? 1 : 0, static_cast<int>(status));
+                                            return S_OK;
+                                        }).Get(), &nav_token);
                                 thread_ready_.store(true);
                                 navigate_thread(url);
                                 std::fprintf(stderr, "[webview] 网页壁纸已就绪\n");

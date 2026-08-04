@@ -97,7 +97,8 @@ void ControlPanel::draw(PlaybackController& controller, PanelRequest& requests, 
         }
 
         float volume = controller.volume();
-        if (ImGui::SliderFloat("音量", &volume, 0.0f, 1.0f, "%.2f")) {
+        if (ImGui::SliderFloat("音量", &volume, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_NoInput)) {
+            std::fprintf(stderr, "[panel] volume set %.2f\n", volume);
             controller.set_volume(volume);
         }
 
