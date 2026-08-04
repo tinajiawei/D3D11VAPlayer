@@ -122,6 +122,13 @@ void FloatingPanel::render(ControlPanel& panel, PlaybackController& controller,
         DispatchMessageW(&msg);
     }
 
+    // 隐藏控制面板时同步隐藏浮层窗口，避免留下黑框并挡住鼠标
+    if (show_panel && !*show_panel) {
+        if (window_.valid() && IsWindowVisible(window_.handle())) ShowWindow(window_.handle(), SW_HIDE);
+        return;
+    }
+    if (window_.valid() && !IsWindowVisible(window_.handle())) ShowWindow(window_.handle(), SW_SHOW);
+
     ImGui::SetCurrentContext(panel_ctx_);
     ImGuiIO& io = ImGui::GetIO();
     io.AddMousePosEvent(static_cast<float>(window_.mouse_x()),
