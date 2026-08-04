@@ -3,14 +3,22 @@
 #include "capture/loopback_capture.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <cstdio>
+#include <memory>
 #include <string>
+#include <thread>
+
+#include <winrt/Windows.Devices.Geolocation.h>
+#include <winrt/Windows.Foundation.h>
 
 #include <wininet.h>
 
 #pragma comment(lib, "wininet.lib")
+#pragma comment(lib, "windowsapp.lib")
 
 namespace me {
 
@@ -179,6 +187,34 @@ const char* wmo_text(int code) {
     return "未知";
 }
 
+// Windows 系统定位（WiFi/GPS，不经过 IP，VPN 不影响）；失败返回 false
+bool windows_location(double& lat, double& lon) {
+    try {
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        auto geolocator = winrt::Windows::Devices::Geolocation::Geolocator{};
+        const auto access = geolocator.RequestAccessAsync().get();
+        if (access != winrt::Windows::Devices::Geolocation::GeolocationAccessStatus::Allowed) {
+            std::fprintf(stderr, "[enhance] 天气: 系统定位权限未开启\n");
+            return false;
+        }
+        const auto pos = geolocator.GetGeopositionAsync().get();
+        const auto coord = pos.Coordinate();
+        const auto point = coord.Point();
+        const auto basic = point.Position();  // C++/WinRT 属性是方法调用
+        lat = basic.Latitude;
+        lon = basic.Longitude;
+        return lat != 0.0 && lon != 0.0;
+    } catch (...) {
+        return false;
+    }
+}
+
+struct LocResult {
+    std::atomic<bool> done{false};
+    double lat = 0.0;
+    double lon = 0.0;
+};
+
 }  // namespace
 
 WallpaperEnhance::~WallpaperEnhance() {
@@ -279,17 +315,42 @@ void WallpaperEnhance::weather_loop(const std::string city_utf8) {
     double lat = 0.0, lon = 0.0;
     std::string city = city_utf8;
     if (city.empty()) {
-        // HTTPS 接口（ip-api 免费版是 http，部分代理环境不稳）
-        const std::string ip = http_get("https://ipwho.is/");
-        lat = json_number(ip, "latitude");
-        lon = json_number(ip, "longitude");
-        if (lat != 0.0 && lon != 0.0) {
-            city = json_string(ip, "city");
-            if (city.empty()) city = json_string(ip, "region");
-            std::fprintf(stderr, "[enhance] 天气: IP 定位 %s (%.4f, %.4f)\n",
+        // 1) Windows 系统定位（WiFi/GPS，VPN 不影响），最多等 6 秒
+        auto loc = std::make_shared<LocResult>();
+        std::thread([loc] {
+            double la = 0.0, lo = 0.0;
+            if (windows_location(la, lo)) {
+                loc->lat = la;
+                loc->lon = lo;
+            }
+            loc->done.store(true);
+        }).detach();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+        while (!loc->done.load() && std::chrono::steady_clock::now() < deadline) Sleep(100);
+        if (loc->done.load() && loc->lat != 0.0 && loc->lon != 0.0) {
+            lat = loc->lat;
+            lon = loc->lon;
+            const std::string rev = http_get(
+                "https://geocoding-api.open-meteo.com/v1/search?reverse=true&latitude=" +
+                std::to_string(lat) + "&longitude=" + std::to_string(lon) +
+                "&language=zh&format=json");
+            city = json_string(rev, "name");
+            if (city.empty()) city = "当前位置";
+            std::fprintf(stderr, "[enhance] 天气: 系统定位 %s (%.4f, %.4f)\n",
                          city.c_str(), lat, lon);
         } else {
-            std::fprintf(stderr, "[enhance] 天气: IP 定位失败，回退北京\n");
+            // 2) IP 定位兜底（可能命中 VPN 出口）
+            const std::string ip = http_get("https://ipwho.is/");
+            lat = json_number(ip, "latitude");
+            lon = json_number(ip, "longitude");
+            if (lat != 0.0 && lon != 0.0) {
+                city = json_string(ip, "city");
+                if (city.empty()) city = json_string(ip, "region");
+                std::fprintf(stderr, "[enhance] 天气: IP 定位 %s (%.4f, %.4f)\n",
+                             city.c_str(), lat, lon);
+            } else {
+                std::fprintf(stderr, "[enhance] 天气: 定位失败，回退北京\n");
+            }
         }
     } else {
         const std::string geo_url =

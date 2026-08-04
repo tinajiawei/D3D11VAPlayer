@@ -101,6 +101,10 @@ window.__meWeatherUpdate = function(p) {
     var el = document.getElementById('weather');
     if (!el) return;
     var a = String(p).split('|');
+    // 放在屏幕底部居中，避免盖住中间的时间/日期
+    el.style.cssText = 'position:absolute;top:86%;left:50%;transform:translateX(-50%);' +
+        'font-size:26px;line-height:1.4;z-index:200;color:#fff;' +
+        'text-shadow:0 0 12px rgba(0,0,0,0.8);white-space:nowrap;width:auto;height:auto;';
     el.style.display = 'block';
     el.innerHTML = a[0] + ' ' + a[1] + '℃ ' + a[2] + '  ' + a[3] + '~' + a[4] + '℃ 风' + a[5];
 };
