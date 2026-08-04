@@ -1,10 +1,18 @@
 #include "media/amf_decoder.h"
 
+#include <windows.h>
 #include "core/log.h"
 
 namespace me {
 
 Error AmfDecoder::open(const AVCodecParameters& params) {
+
+    // 0. AMD 运行时不存在（Intel/NVIDIA 笔记本）时给出明确错误，而不是 Unknown error
+    static HMODULE amf_dll = nullptr;
+    if (!amf_dll) {
+        amf_dll = LoadLibraryW(L"amfrt64.dll");
+        if (!amf_dll) return Error::make(Err::Unsupported, "AMD AMF 运行时(amfrt64.dll)不存在");
+    }
     close();
 
     // 1. 创建 AMF 设备上下文（FFmpeg 内部动态加载 amfrt64.dll）

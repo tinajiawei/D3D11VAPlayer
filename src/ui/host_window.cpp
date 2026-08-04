@@ -1,4 +1,5 @@
 #include "ui/host_window.h"
+#include "ui/desktop_utils.h"
 
 #include <shellapi.h>
 #include "imgui_impl_win32.h"
@@ -42,26 +43,10 @@ void HostWindow::destroy() {
 }
 
 // 找到桌面图标层（SHELLDLL_DefView）所在 WorkerW：壁纸窗口应挂在它下面
-static HWND find_worker_w() {
-    const HWND progman = FindWindowW(L"Progman", nullptr);
-    if (progman) {
-        // 通知 Progman 创建 WorkerW（部分系统需要先触发一次）
-        SendMessageTimeoutW(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, nullptr);
-    }
-    HWND workerw = nullptr;
-    EnumWindows([](HWND top, LPARAM lp) -> BOOL {
-        if (FindWindowExW(top, nullptr, L"SHELLDLL_DefView", nullptr)) {
-            *reinterpret_cast<HWND*>(lp) = FindWindowExW(nullptr, top, L"WorkerW", nullptr);
-            return FALSE;
-        }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&workerw));
-    return workerw;
-}
 
 bool HostWindow::enter_wallpaper_mode() {
     if (!hwnd_ || wallpaper_mode_) return wallpaper_mode_;
-    const HWND workerw = find_worker_w();
+    const HWND workerw = me::find_desktop_workerw();
     if (!workerw) return false;
 
     // 保存原状，退出时恢复

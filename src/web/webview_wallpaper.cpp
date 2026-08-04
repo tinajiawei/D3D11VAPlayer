@@ -1,4 +1,5 @@
 #include "web/webview_wallpaper.h"
+#include "ui/desktop_utils.h"
 
 #include <cstdio>
 #include <string>
@@ -15,21 +16,6 @@ namespace me {
 namespace {
 
 // 找到桌面图标层（SHELLDLL_DefView）所在的 WorkerW：网页壁纸窗口挂到它下面
-HWND find_worker_w() {
-    const HWND progman = FindWindowW(L"Progman", nullptr);
-    if (progman) {
-        SendMessageTimeoutW(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, nullptr);
-    }
-    HWND workerw = nullptr;
-    EnumWindows([](HWND top, LPARAM lp) -> BOOL {
-        if (FindWindowExW(top, nullptr, L"SHELLDLL_DefView", nullptr)) {
-            *reinterpret_cast<HWND*>(lp) = FindWindowExW(nullptr, top, L"WorkerW", nullptr);
-            return FALSE;
-        }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&workerw));
-    return workerw;
-}
 
 // 内置演示页：纯 CSS 动画（渐变 + 粒子 + 时钟），无网络依赖
 const wchar_t* kDemoHtml = LR"html(
@@ -74,7 +60,7 @@ std::string WebViewWallpaper::url() const {
 
 bool WebViewWallpaper::create(HWND workerw, const RECT& rc, const std::string& url) {
     if (active()) return true;
-    if (!workerw) workerw = find_worker_w();
+    if (!workerw) workerw = me::find_desktop_workerw();
     if (!workerw) return false;
 
     {

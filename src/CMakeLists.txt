@@ -129,6 +129,7 @@ add_executable(media_player_app
     ui/control_panel.cpp
     ui/panel_window.cpp
     ui/floating_panel.cpp
+    ui/desktop_utils.cpp
     ui/tray_icon.cpp
     ui/main.cpp
     web/webview_wallpaper.cpp
