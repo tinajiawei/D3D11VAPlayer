@@ -108,14 +108,27 @@ PopResult D3D11vaDecoder::pop(AVFrame* out) {
     }
 
     // 把 GPU 帧拷回 CPU（NV12），复用 sw_frame_ 缓冲区
+    // 把 GPU 帧拷回 CPU：格式跟随硬件帧 sw_format（NV12 或 P010 10bit），
+    // 尺寸变化时重新分配（视频中途切分辨率会导致 EINVAL）
     if (!sw_frame_) sw_frame_ = make_frame();
-    if (!sw_frame_->buf[0]) {
-        sw_frame_->format = AV_PIX_FMT_NV12;
+    AVPixelFormat sw_fmt = AV_PIX_FMT_NV12;
+    if (ctx_ && ctx_->hw_frames_ctx) {
+        const auto* hwfc = reinterpret_cast<const AVHWFramesContext*>(ctx_->hw_frames_ctx->data);
+        if (hwfc && hwfc->sw_format != AV_PIX_FMT_NONE) sw_fmt = hwfc->sw_format;
+    }
+    const bool need_realloc = !sw_frame_->buf[0] ||
+                              sw_frame_->format != sw_fmt ||
+                              sw_frame_->width != hw_frame_->width ||
+                              sw_frame_->height != hw_frame_->height;
+    if (need_realloc) {
+        sw_frame_.reset();
+        sw_frame_ = make_frame();
+        sw_frame_->format = sw_fmt;
         sw_frame_->width = hw_frame_->width;
         sw_frame_->height = hw_frame_->height;
-        ret = av_frame_get_buffer(sw_frame_.get(), 0);
-        if (ret < 0) {
-            error_ = error_from_av(ret, "av_frame_get_buffer");
+        const int rbuf = av_frame_get_buffer(sw_frame_.get(), 0);
+        if (rbuf < 0) {
+            error_ = error_from_av(rbuf, "av_frame_get_buffer");
             return PopResult::Failed;
         }
     }

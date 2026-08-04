@@ -5,6 +5,8 @@
 
 extern "C" {
 #include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libavutil/pixdesc.h>
 }
 
 std::string utf8_from_wide(const wchar_t* w) {
@@ -17,26 +19,21 @@ std::string utf8_from_wide(const wchar_t* w) {
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2) return 1;
     const std::string path = utf8_from_wide(argv[1]);
-
     AVFormatContext* fmt = nullptr;
     int ret = avformat_open_input(&fmt, path.c_str(), nullptr, nullptr);
     std::printf("open ret=%d\n", ret);
     if (ret < 0) return 1;
     ret = avformat_find_stream_info(fmt, nullptr);
     std::printf("stream_info ret=%d streams=%d\n", ret, fmt->nb_streams);
-
-    // 与 app 相同：在子线程里 read
-    std::thread t([fmt] {
-        for (int n = 0; n < 3; ++n) {
-            AVPacket* pkt = av_packet_alloc();
-            const int r = av_read_frame(fmt, pkt);
-            std::printf("thread read %d ret=%d size=%d stream=%d\n", n, r,
-                        r >= 0 ? pkt->size : -1, r >= 0 ? pkt->stream_index : -1);
-            av_packet_free(&pkt);
-            if (r < 0) break;
-        }
-    });
-    t.join();
+    for (unsigned i = 0; i < fmt->nb_streams; ++i) {
+        AVStream* st = fmt->streams[i];
+        const AVCodecParameters* p = st->codecpar;
+        const char* fmt_name = av_get_pix_fmt_name(static_cast<AVPixelFormat>(p->format));
+        std::printf("stream %u type=%d codec=%d pixfmt=%d(%s) w=%d h=%d profile=%d\n", i,
+                    static_cast<int>(p->codec_type), static_cast<int>(p->codec_id),
+                    static_cast<int>(p->format), fmt_name ? fmt_name : "?",
+                    p->width, p->height, static_cast<int>(p->profile));
+    }
     avformat_close_input(&fmt);
     return 0;
 }
