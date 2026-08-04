@@ -428,7 +428,7 @@ int wmain(int argc, wchar_t** argv) {
             ++i;  // 跳过 --reopen 的值，避免被当成媒体路径
             continue;
         }
-        if (arg != L"--hw" && arg != L"--debug") {
+        if (arg != L"--hw" && arg != L"--debug" && arg != L"--console") {
             first_media = arg;
             if (capture_screen_seconds <= 0.0) open_media(arg, prefer_hw_cli);
             break;

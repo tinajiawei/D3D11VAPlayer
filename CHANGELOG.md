@@ -1,5 +1,9 @@
 ﻿# 版本记录
 
+## v0.2.6（2026-08）— CLI 小修
+- 修复 --console / --debug 被当作媒体路径打开的问题；纯参数启动不再弹“打开失败”
+- 正常使用无需任何参数，双击 exe 即可
+
 ## v0.2.5（2026-08）— 崩溃定位与 24H2 挂载加固
 - 崩溃处理器升级：打印异常线程、模块名、模块偏移（RVA）、32 帧调用栈，并自动写 media_player_app_crash.dmp（minidump）
 - 渲染器加固：draw_frame / Present 增加 RTV 空指针保护；ResizeBuffers/GetBuffer 失败时尝试恢复 RTV，避免下一帧空指针崩溃
